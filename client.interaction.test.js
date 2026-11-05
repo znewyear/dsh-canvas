@@ -1,0 +1,514 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import vm from 'node:vm';
+
+const source=await readFile(new URL('./client.js',import.meta.url),'utf8');
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+
+// Drives the mounted panel with real pointer/keyboard handlers so the gesture code, not a copy of it, produces the operations.
+function harness({session,activity}={}){
+  let module,cursor=0;const states=[],refs=[],effects=[],registrations=[],calls=[];
+  const el=()=>({focus(){},getBoundingClientRect:()=>({left:0,top:0}),clientWidth:800,clientHeight:600,setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false,style:{}});
+  const React={Fragment:'fragment',createElement:(type,props,...children)=>({type,props,children}),
+    useState(initial){const i=cursor++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return [states[i],value=>{states[i]=typeof value==='function'?value(states[i]):value;}];},
+    useRef(initial){const i=cursor++;return refs[i]??={current:initial===null?el():initial};},
+    useEffect(fn){effects.push(fn);}};
+  const doc={id:'canvas',version:1,elements:[],history:[],future:[],annotations:[],pending:[]};
+  const envelope=d=>({ok:true,json:async()=>({ok:true,document:{...d,elements:[...d.elements]},...(activity?{activity}:{})})});
+  const fetch=async(url,init)=>{
+    calls.push([url,JSON.parse(init.body)]);
+    const args=JSON.parse(init.body);
+    if(url.endsWith('/read'))return envelope(doc);
+    doc.version++;
+    args.ops.forEach(op=>{
+      if(op.type==='create')doc.elements.push(op.element);
+      else if(op.type==='update'){const el=doc.elements.find(e=>e.id===op.id);if(el)Object.assign(el,op.patch);}
+      else if(op.type==='delete')doc.elements=doc.elements.filter(e=>!op.ids.includes(e.id));
+      doc.history.push(op);
+    });
+    return envelope(doc);
+  };
+  vm.runInNewContext(source,{window:{__ModuleLoader__:{load:value=>{module=value;}},addEventListener(){},removeEventListener(){}},setInterval:()=>1,clearInterval(){},setTimeout:()=>0,clearTimeout(){},__DSH_TRANSPORT__:{fetch}});
+  const plugin=module.factory(()=>React);
+  const sessions={retain:(id,options)=>({ready:Promise.resolve(),release(){},binding:{session:{prompt:async(content,mode)=>{calls.push(['prompt',id,options,content,mode]);return {ok:true};}}}})};
+  plugin.apply({get:name=>({slots:{inject:(_,fn)=>fn(),register:(options,component)=>registrations.push({options,component})},locale:{getLocale:()=>({active:'en'}),subscribe:()=>()=>{}},layout:{},sessions})[name]});
+  const main=registrations.find(r=>r.options.name==='main').component();
+  const canvas=main.children.find(child=>typeof child?.type==='function');
+  const render=()=>{cursor=0;return canvas.type(session?{...canvas.props,sessionId:session}:canvas.props);};
+  render();
+  effects.splice(0).forEach(fn=>fn?.());
+  return {render,calls};
+}
+const nodes=tree=>tree&&typeof tree==='object'?[tree,...(tree.children??[]).flatMap(nodes)]:[];
+const text=tree=>typeof tree==='string'?tree:(tree?.children??[]).map(text).join('');
+const button=(tree,label)=>nodes(tree).find(n=>n.type==='button'&&n.props?.['aria-label']===label);
+const key=(k,extra={})=>({key:k,code:extra.code??'',ctrlKey:!!extra.ctrlKey,metaKey:false,shiftKey:!!extra.shiftKey,target:{tagName:'DIV'},preventDefault(){},stopPropagation(){}});
+const pointer=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+
+async function gesture(panel,points){
+  const svg=nodes(panel.render()).find(n=>n.props?.role==='img').props;
+  svg.onPointerDown(pointer(...points[0]));
+  for(const point of points.slice(1))svg.onPointerMove(pointer(...point));
+  await svg.onPointerUp(pointer(...points.at(-1)));
+  await tick();
+}
+
+test('a pen click without a drag submits nothing',async()=>{  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  await gesture(panel,[[120,120]]);
+  assert.deepEqual(panel.calls.map(call=>call[0]),['api/intent-canvas/read']);
+});
+
+test('pen, eraser and lasso gestures reach the shared engine',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  assert.match(text(tree),/Version 1/);
+
+  tree.props.onKeyDown(key('p'));
+  tree=panel.render();
+  assert.equal(button(tree,'Pen').props['aria-pressed'],true,'P selects the pen');
+
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  let ops=panel.calls.at(-1)[1].ops;
+  assert.equal(ops[0].type,'create');
+  assert.equal(ops[0].element.kind,'path');
+  assert.deepEqual(ops[0].element.rect,[10,30,200,40]);
+  assert.deepEqual(ops[0].element.points,[[0,0],[100,20],[200,40]]);
+  assert.equal(ops[0].element.strokeWidth,2.5);
+
+  await gesture(panel,[[100,200],[200,220],[300,240]]);
+  assert.equal(panel.calls.at(-1)[1].ops[0].element.rect[1],130);
+
+  tree=panel.render();
+  tree.props.onKeyDown(key('e'));
+  await gesture(panel,[[120,120],[240,150],[300,170]]);
+  ops=panel.calls.at(-1)[1].ops;
+  assert.equal(ops[0].type,'erasePath');
+  assert.equal(ops[0].radius,14,'eraser sends its local radius');
+  assert.equal(ops[0].points.length,3);
+
+  tree=panel.render();
+  tree.props.onKeyDown(key('l'));
+  await gesture(panel,[[60,60],[400,60],[400,260],[60,260]]);
+  tree=panel.render();
+  const consult=nodes(tree).find(n=>n.props?.['aria-label']==='What does this circle mean?');
+  assert.ok(consult,'lasso around elements asks what the circle means');
+  assert.match(text(consult),/Nothing converts without your choice/);
+  assert.equal(button(consult,'Group enclosed').props.disabled,false);
+
+  button(consult,'Group enclosed').props.onClick();
+  await tick();
+  ops=panel.calls.at(-1)[1].ops;
+  assert.equal(ops.length,1);
+  assert.equal(ops[0].type,'group');
+  assert.equal(ops[0].ids.length,2);
+
+  tree=panel.render();
+  tree.props.onKeyDown(key('z',{ctrlKey:true}));
+  await tick();
+  assert.equal(panel.calls.at(-1)[1].ops[0].type,'undo');
+});
+
+test('selection shortcuts move, duplicate and delete through the same engine',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  const id=panel.calls.at(-1)[1].ops[0].element.id;
+
+  tree=panel.render();
+  tree.props.onKeyDown({...key('ArrowRight'),code:'ArrowRight'});
+  await tick();
+  assert.deepEqual(panel.calls.at(-1)[1].ops[0],{type:'move',ids:[id],dx:1,dy:0});
+
+  tree=panel.render();
+  tree.props.onKeyDown({...key('ArrowDown',{shiftKey:true}),code:'ArrowDown'});
+  await tick();
+  assert.equal(panel.calls.at(-1)[1].ops[0].dy,10);
+
+  tree=panel.render();
+  tree.props.onKeyDown(key('d',{ctrlKey:true}));
+  await tick();
+  assert.equal(panel.calls.at(-1)[1].ops[0].type,'duplicate');
+
+  tree=panel.render();
+  tree.props.onKeyDown({...key('Delete'),code:'Delete'});
+  await tick();
+  assert.equal(panel.calls.at(-1)[1].ops[0].type,'delete');
+});
+
+test('rotating twice in a row commits both angles',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  const ev=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
+    target:{getAttribute:name=>name==='data-rotate'?'1':null},
+    preventDefault(){},stopPropagation(){},
+    currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+  const spin=(from,to)=>async()=>{
+    const layer=nodes(panel.render()).find(n=>n.props?.className==='ic-handles');
+    layer.props.onPointerDown(ev(...from));
+    layer.props.onPointerMove(ev(...to));
+    await layer.props.onPointerUp(ev(...to));
+    await tick();
+  };
+  await spin([200,60],[300,120])();
+  const first=panel.calls.at(-1)[1].ops[0];
+  assert.equal(first.type,'update');
+  assert.ok(Math.abs(first.patch.rotation-90)<1);
+  await spin([200,60],[300,120])();
+  const second=panel.calls.at(-1)[1].ops[0];
+  assert.equal(second.type,'update','the second rotation also commits');
+  assert.ok(Math.abs(second.patch.rotation-180)<1,'the angle accumulates');
+});
+
+test('a second rotation started before the re-render still accumulates',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  tree=panel.render();
+  tree.props.onKeyDown(key('v'));
+  tree=panel.render();
+  button(tree,'More actions').props.onClick();
+  tree=panel.render();
+  button(tree,'Rotate').props.onClick();
+  const canvas=nodes(panel.render()).find(n=>n.props?.role==='img').props;
+  const ev=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
+    currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+  canvas.onPointerDown(ev(200,60));
+  canvas.onPointerMove(ev(300,120));
+  await canvas.onPointerUp(ev(300,120));
+  await tick();
+  const first=panel.calls.at(-1)[1].ops[0];
+  assert.ok(Math.abs(first.patch.rotation-90)<1,'first turn is 90');
+  // Same captured handlers, so the closure still sees the document from before the first commit.
+  canvas.onPointerDown(ev(300,120));
+  canvas.onPointerMove(ev(200,60));
+  await canvas.onPointerUp(ev(200,60));
+  await tick();
+  const second=panel.calls.at(-1)[1].ops[0];
+  assert.equal(second.type,'update');
+  assert.ok(Math.abs(second.patch.rotation-360)<1||Math.abs(second.patch.rotation)<1,'stale closure must not reset the angle');
+});
+
+test('repeated resizes keep a usable minimum size',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('r'));
+  await gesture(panel,[[100,100],[300,200]]);
+  const ev=(x,y,target)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
+    target:{getAttribute:name=>name==='data-resize'?target:null},
+    preventDefault(){},stopPropagation(){},
+    currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+  for(let i=0;i<3;i++){
+    const layer=nodes(panel.render()).find(n=>n.props?.className==='ic-handles');
+    layer.props.onPointerDown(ev(300,200,'se'));
+    layer.props.onPointerMove(ev(120,120));
+    await layer.props.onPointerUp(ev(120,120));
+    await tick();
+  }
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'resize');
+  assert.ok(op.rect[2]>=8&&op.rect[3]>=8,'shape keeps a grabbable size');
+});
+
+test('dragging the rotation handle stores an angle',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  tree=panel.render();
+  const layer=nodes(tree).find(n=>n.props?.className==='ic-handles');
+  const ev=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
+    target:{getAttribute:name=>name==='data-rotate'?'1':null},
+    preventDefault(){},stopPropagation(){},
+    currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+  layer.props.onPointerDown(ev(200,60));
+  layer.props.onPointerMove(ev(300,120));
+  await layer.props.onPointerUp(ev(300,120));
+  await tick();
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'update');
+  assert.ok(Math.abs(op.patch.rotation-90)<1,'rotation reaches 90 degrees');
+});
+
+test('the fill toggle fills new shapes',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('r'));
+  tree=panel.render();
+  const fill=button(tree,'Fill');
+  assert.ok(fill,'fill toggle is offered for shapes');
+  fill.props.onClick();
+  tree=panel.render();
+  await gesture(panel,[[100,100],[300,260]]);
+  const element=panel.calls.at(-1)[1].ops[0].element;
+  assert.equal(element.kind,'rect');
+  assert.equal(element.fill,'#cfe3d5');
+});
+
+test('typing a text block and clicking away commits it',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('t'));
+  tree=panel.render();
+  const down=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
+    currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+  nodes(tree).find(n=>n.props?.role==='img').props.onPointerDown(down(200,150));
+  tree=panel.render();
+  const area=nodes(tree).find(n=>n.props?.['aria-label']==='Text content');
+  assert.ok(area,'text editor opens');
+  area.props.onChange({target:{value:'Hello'}});
+  tree=panel.render();
+  nodes(tree).find(n=>n.props?.role==='img').props.onPointerDown(down(400,300));
+  await tick();
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'create');
+  assert.equal(op.element.text,'Hello');
+});
+
+test('right-click opens a canvas menu with copy and paste',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  const canvas=nodes(tree).find(n=>n.props?.role==='img');
+  canvas.props.onContextMenu({clientX:200,clientY:150,preventDefault(){}});
+  tree=panel.render();
+  const menu=nodes(tree).find(n=>n.props?.role==='menu');
+  assert.ok(menu,'context menu renders');
+  const items=nodes(menu).filter(n=>n.props?.role==='menuitem').map(n=>text(n));
+  assert.ok(items.some(t=>/Copy|复制/.test(t)),'offers copy');
+  assert.ok(items.some(t=>/Paste|粘贴/.test(t)),'offers paste');
+});
+
+test('the text editor sets font size and colour on new text',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('t'));
+  tree=panel.render();
+  const down=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
+    currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+  nodes(tree).find(n=>n.props?.role==='img').props.onPointerDown(down(200,150));
+  tree=panel.render();
+  const area=nodes(tree).find(n=>n.props?.['aria-label']==='Text content');
+  area.props.onChange({target:{value:'Big'}});
+  tree=panel.render();
+  const size=nodes(tree).find(n=>n.props?.['aria-label']==='Font size');
+  assert.ok(size,'font size control exists');
+  size.props.onChange({target:{value:'28'}});
+  tree=panel.render();
+  nodes(tree).find(n=>n.props?.role==='img').props.onPointerDown(down(400,300));
+  await tick();
+  const element=panel.calls.at(-1)[1].ops[0].element;
+  assert.equal(element.text,'Big');
+  assert.equal(element.fontSize,28);
+});
+
+test('the numbers toggle switches the badges off and on',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  const on=button(tree,'Numbers');
+  assert.equal(on.props['aria-pressed'],true);
+  on.props.onClick();
+  tree=panel.render();
+  assert.equal(button(tree,'Numbers').props['aria-pressed'],false);
+});
+
+test('rotate mode turns any drag into a rotation and repeats',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  tree=panel.render();
+  tree.props.onKeyDown(key('v'));
+  tree=panel.render();
+  button(tree,'More actions').props.onClick();
+  tree=panel.render();
+  const mode=button(tree,'Rotate');
+  assert.ok(mode,'rotate mode toggle exists');
+  mode.props.onClick();
+  tree=panel.render();
+  await gesture(panel,[[200,60],[300,120]]);
+  const first=panel.calls.at(-1)[1].ops[0];
+  assert.equal(first.type,'update');
+  assert.ok(Math.abs(first.patch.rotation-90)<1);
+  tree=panel.render();
+  await gesture(panel,[[200,60],[300,120]]);
+  const second=panel.calls.at(-1)[1].ops[0];
+  assert.equal(second.type,'update','the second rotation commits again');
+  assert.ok(Math.abs(second.patch.rotation-180)<1,'angles accumulate');
+});
+
+test('the pen size slider sets the stroke width',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  tree=panel.render();
+  const slider=nodes(tree).find(n=>n.props?.['aria-label']==='Pen size');
+  assert.ok(slider,'the pen offers a size slider');
+  slider.props.onChange({target:{value:'7'}});
+  tree=panel.render();
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  const element=panel.calls.at(-1)[1].ops[0].element;
+  assert.equal(element.strokeWidth,7);
+});
+
+test('whole erase removes everything it touches in one operation',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  tree=panel.render();
+  tree.props.onKeyDown(key('e'));
+  tree=panel.render();
+  const whole=button(tree,'Whole erase');
+  assert.ok(whole,'eraser offers the whole-stroke mode');
+  whole.props.onClick();
+  tree=panel.render();
+  await gesture(panel,[[145,108],[155,112],[165,116]]);
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'delete');
+  assert.equal(op.ids.length,1);
+});
+
+test('dragging a selection handle resizes through the handle layer',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  tree=panel.render();
+  const layer=nodes(tree).find(n=>n.props?.className==='ic-handles');
+  assert.ok(layer,'handle layer renders above the canvas');
+  const handleEvent=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
+    target:{getAttribute:name=>name==='data-resize'?'se':null},
+    preventDefault(){},stopPropagation(){},
+    currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+  layer.props.onPointerDown(handleEvent(300,140));
+  layer.props.onPointerMove(handleEvent(400,200));
+  await layer.props.onPointerUp(handleEvent(400,200));
+  await tick();
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'resize');
+  assert.ok(op.rect[2]>200,'width grows with the drag');
+  assert.ok(op.rect[3]>40,'height grows with the drag');
+});
+
+test('selection exposes eight directional handles',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  tree=panel.render();
+  const handles=nodes(tree).filter(n=>n.props?.['data-resize']).map(n=>n.props['data-resize']).sort();
+  assert.deepEqual(handles,['e','n','ne','nw','s','se','sw','w']);
+});
+
+test('pointing at a tool shows its name and shortcut',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  button(tree,'Pen').props.onMouseEnter({currentTarget:{offsetLeft:40,offsetWidth:30}});
+  tree=panel.render();
+  const tip=nodes(tree).find(n=>n.props?.role==='tooltip');
+  assert.ok(tip,'tooltip renders on hover');
+  assert.match(text(tip),/Pen · P/);
+});
+
+test('the semicircle tool draws a half disc from a drag',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  const tool=button(tree,'Semicircle');
+  assert.ok(tool,'the semicircle tool is offered');
+  tool.props.onClick();
+  tree=panel.render();
+  await gesture(panel,[[120,140],[400,260]]);
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'create');
+  assert.equal(op.element.kind,'path');
+  assert.equal(op.element.points.length,33);
+  assert.ok(op.element.rect[2]>200,'the drag width becomes the diameter');
+  assert.ok(Math.abs(op.element.rect[3]-120)<2,'the drag height becomes the radius');
+});
+
+test('clearing the board needs a second click and submits one clear operation',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  tree=panel.render();
+  const first=button(tree,'Clear canvas');
+  assert.ok(first,'clear control is offered');
+  first.props.onClick();
+  await tick();
+  tree=panel.render();
+  const second=button(tree,'Confirm clear');
+  assert.ok(second,'first click only arms it');
+  second.props.onClick();
+  await tick();
+  const ops=panel.calls.at(-1)[1].ops;
+  assert.equal(ops.length,1);
+  assert.equal(ops[0].type,'clear');
+});
+
+test('the session header link binds the panel to that session canvas',async()=>{
+  const panel=harness({session:'session-abc'});
+  assert.equal(panel.calls[0][1].doc,'s-session-abc','panel opens the session document');
+  await tick();
+  assert.match(text(panel.render()),/Version 1/);
+});
+
+test('the send shortcut also offers filling the composer',async()=>{
+  const panel=harness({session:'session-abc'});
+  await tick();
+  const tree=panel.render();
+  assert.ok(button(tree,'Send to AI'),'canvas offers a send shortcut');
+  const fill=button(tree,'Fill input');
+  assert.ok(fill,'canvas offers a fill-without-sending shortcut');
+  assert.equal(panel.calls.filter(c=>c[0]==='prompt').length,0,'filling does not send');
+});
+
+test('one canvas click sends the session a message',async()=>{
+  const panel=harness({session:'session-abc'});
+  await tick();
+  const send=button(panel.render(),'Send to AI');
+  assert.ok(send,'canvas offers a send shortcut');
+  send.props.onClick();
+  await tick();
+  const prompt=panel.calls.find(call=>call[0]==='prompt');
+  assert.ok(prompt,'prompts the current session');
+  assert.equal(prompt[1],'session-abc');
+  assert.equal(prompt[2].source,'controllerOperation');
+  assert.match(prompt[3][0].text,/s-session-abc/);
+  assert.equal(prompt[4],'queue');
+});
+
+test('the panel shows when the AI is editing',async()=>{
+  const panel=harness({session:'session-abc',activity:{author:'ai',at:Date.now(),version:2}});
+  await tick();
+  assert.match(text(panel.render()),/AI is editing/);
+});

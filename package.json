@@ -1,0 +1,14 @@
+{
+  "name": "@local/intent-canvas",
+  "version": "1.0.85",
+  "private": true,
+  "type": "module",
+  "description": "Collaborative human+AI canvas plugin for DeepSeek Harness (shared document, durable ops, local stroke erasure, pen styles, export)",
+  "keywords": ["dsh-plugin", "canvas", "collaboration", "whiteboard"],
+  "scripts": {
+    "test": "node --test engine.test.js store.test.js client.test.js client.transport.test.js client.interaction.test.js"
+  },
+  "exports": {".": "./index.js", "./client": "./client.js", "./locale/*.json": "./locale/*.json", "./icon": "./icon.svg"},
+  "files": ["host.js", "index.js", "store.js", "client.js", "engine.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "docs"],
+  "dsh": {"bundle": {"patch": "./cordis.patch.yml"}, "client": {"platform": "web", "immediately": true, "inject": ["@deepseek-ai/dsh-client-ui-conversation"]}}
+}
