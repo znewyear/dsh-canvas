@@ -1,0 +1,22 @@
+# SpecGit 生成物（不纳入版本控制）
+.specgit.yaml
+.specgit.yaml.bak
+.specgit.yaml.tmp
+.specgit/
+specgit-report*.json
+specgit-status*.json
+
+# SpecGit 生成的 Skill 与宿主钩子（由 CLI 维护，不要提交）
+.agents/skills/specgit-native/
+.agents/skills/specgit-native/**
+.claude/skills/specgit-native/
+.github/hooks/
+.gitlab/hooks/
+.husky/specgit*
+
+# 依赖与本地缓存
+node_modules/
+.pnpm-store/
+*.log
+.DS_Store
+Thumbs.db
