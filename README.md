@@ -1,121 +1,79 @@
-# 协作画布（Collaborative Canvas）· DSH 插件项目
+# dsh-canvas · 协作画布
 
-在 DeepSeek Harness 的会话里嵌一块**人与 AI 共用的画布**：文档由双方共同编辑、操作有版本与历史、AI 通过 `canvas_read` / `canvas_apply` 读写同一份数据。
+在 DeepSeek Harness（DSH）会话中，人与 AI 共同编辑同一份持久化画布。人通过界面操作，AI 通过 `canvas_read` / `canvas_apply` 读写；编辑共用版本检查、原子批次与撤销历史。
 
-这个目录就是插件的**源码工程**，可以独立开发、跑测试、安装到 DSH 配置（profile `desktop`）。
+仓库名为 **dsh-canvas**。运行时包名仍为 `@local/intent-canvas`，存储域仍为 `intent_canvas_shared`，已有路由和图元数据标记也暂保留，避免破坏已有安装与文档的兼容性。本项目是社区插件，不代表 DSH 官方产品或认证。
 
----
+## 功能
 
-## 1. 功能概览
+- **绘图与样式**：Canvas 2D 无限画布，平移、缩放、适应内容与点阵网格；画笔、文字、矩形、椭圆、箭头、便签、套索与拖动半圆。画笔有普通、马克笔、铅笔、水彩笔、钢笔五种样式；支持描边、粗细、填充、文字字号与颜色。
+- **编辑**：单选/多选、八向缩放、旋转、编组/解组、复制/粘贴、对齐、分布与层级调整。局部橡皮切分笔迹及支持的形状轮廓，整块橡皮删除命中图元；操作进入共享撤销/重做历史。
+- **分享与导出**：右键复制 PNG 与可编辑图元 JSON、粘贴兼容 JSON，导出白底或透明 PNG。系统剪贴板能力取决于浏览器权限与支持；不支持把任意图片粘贴为画布图元。
+- **人与 AI 协作**：批注、待确认事项、图元编号、AI 编辑提示；「发给 AI」发送当前画布摘要，「填入」通过宿主的会话级 `inputActions` 插入摘要但不发送、不覆盖已选草稿；没有该接口时回退到剪贴板，编辑器忙碌或版本变化时明确报错。
+- **DSH 集成**：会话视图「画布」、侧栏主面板及会话右侧栏入口；会话文档使用 `s-<sessionId>`，无会话上下文时回落到共享文档 `canvas`。右侧栏入口依赖宿主提供相应服务。
 
-**画布**
-- 无限画布（Canvas 2D 绘制），支持缩放 / 平移 / 自适应
-- 画笔、橡皮（按涂擦除 / 整块清除）、文字、矩形、椭圆、箭头、便签、圈选、半圆
-- 画笔 5 种笔型：普通 / 马克笔 / 铅笔 / 水彩笔 / 钢笔（`pen` 字段）
-- 形状填充色、描边色/线宽、文字字号与颜色
-- 选择、8 向缩放、旋转（360°）、编组/取消编组、对齐、分布、层级
-- 右键菜单：复制（PNG + JSON 双格式到系统剪贴板）、粘贴、导出白底/透明 PNG
-- 图元序号徽章（可开关）、底部暗色模糊渐变、左侧竖排工具栏
+AI 默认文字优先：明确要求操作画布或通过「发给 AI」提交时使用；沟通难以对齐且可视化确有帮助时，也可绘制标为「待确认」的最小草图。仅提到结构、流程或画布插件，不应自动触发绘图。这是提示词策略，不是程序级工具调用拦截。
 
-**与 AI 协作**
-- `canvas_read`：读取文档（元素、批注、待确认项、历史版本）
-- `canvas_apply`：原子提交一组操作（create/update/delete/move/resize/erasePath/group/…/undo/redo）
-- 版本号 + 历史 + 冲突检测（`VERSION_CONFLICT`），两个作者同时改不会互相覆盖
-- 「发给 AI」按钮：直接发送当前画布摘要；「填入」按钮：只填进对话输入框不发送
+## 本地测试
 
-**宿主集成**
-- 会话级文档：`s-<sessionId>`，每个会话一块画布
-- 入口：会话视图标签「画布」、右侧栏「协作画布」、会话头部按钮
-- 侧栏内容与宿主 React 树隔离（缓存元素，宿主重渲染不会重绘画布）
+需要 **Node.js 22 或 24**。测试使用 Node 内置测试运行器，当前无需安装第三方依赖：
 
----
-
-## 2. 目录结构
-
-```
-collab-canvas/
-├── index.js            Host 半：工具注册、HTTP 路由、系统提示词、活动标记
-├── host.js             Host 入口（导出 index 的 plugin）
-├── store.js            持久化存储适配（storageDomain）
-├── engine.js           文档引擎：操作语义、历史、擦除、校验（无 UI 依赖）
-├── client.js           Web 半：画布 UI、绘制、手势、右键菜单、注册到 Slot
-├── locale/{en,zh}.json 界面文案
-├── icon.svg            侧栏图标
-├── cordis.patch.yml    插件挂载补丁
-├── package.json        DSH 插件清单（dsh.client / dsh.bundle）
-├── docs/intent-canvas.md  设计 + 每一轮迭代记录（含未验证项）
-└── *.test.js           5 个测试文件，node --test 运行
+```sh
+npm test
 ```
 
-**分层**：`engine.js` 纯函数式操作（可单测） → `store.js` 落盘 → `index.js` 暴露工具/路由 → `client.js` 渲染与交互。
+也可直接运行并自动发现测试：
 
----
-
-## 3. 开发与测试
-
-需要 Node 22+（用 DSH 自带运行时即可）：
-
-```powershell
-$node = 'C:\Users\Administrator\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
-& $node --test engine.test.js store.test.js client.test.js client.transport.test.js client.interaction.test.js
+```sh
+node --test
 ```
 
-当前状态：**46 个断言全部通过**。
+CI 在 Node.js 22、24 上执行 `npm test`，不进行依赖安装。测试数量会随回归用例变化，以实际输出为准。测试覆盖文档引擎、存储、Client 注册、传输和模拟交互；**通过单元/模拟测试不等于完成真实 DSH 页面、浏览器权限或端到端验收**。
 
-- `engine.test.js`：操作语义、历史、擦除几何、形状擦除、线宽补偿
-- `store.test.js`：持久化、并发提交、冲突
-- `client.test.js`：Slot 注册、会话绑定、侧栏标签
-- `client.transport.test.js`：Host 路由与响应包装
-- `client.interaction.test.js`：手势（画笔/橡皮/圈选/缩放/旋转）、右键菜单、文字编辑、导出按钮、填充、编号开关
+## 安装与更新
 
----
+这是 DSH 插件源码，不是独立网页，也不是已发布的 npm 安装包。当前清单限定 DSH `0.2.2-rc.1`，其他版本需重新核验接口并更新兼容声明；不要绕过版本检查。Host 通过标准 ESM 导入依赖，借助 DSH 的 peer-aware 运行时解析使用宿主提供的包，独立 `node index.js` 不属于启动方式。相关 peer 标为 optional 仅用于避免包管理器自动安装整套宿主，并不表示运行时可以缺少它们。需要已有可用的 DSH 环境。安装前，请优先阅读**当前 DSH 安装随附的 `cordis-plugin-development` skill**，以及其中的 Host/Client 插件、安装和验证参考；具体 API、配置与生效方式以所用 DSH 版本为准，不根据旧记录猜测。
 
-## 4. 安装到 DSH
+在 DSH 中，使用插件管理工具安装本地仓库目录，例如：
 
-在本目录执行 `plugin_manager`（或让 AI 会话里执行）：
-
-```
-install_bundle  target = F:\projects\AI\plugins\collab-canvas
+```text
+plugin_manager({ action: "install_bundle", target: "<本地 dsh-canvas 仓库的绝对路径>" })
 ```
 
-更新流程：先 `remove_bundle @local/intent-canvas`，再 `install_bundle` 上面的路径；客户端改动需要 `Ctrl+R`。
+将占位符替换成自己的路径。无需预设特定 profile、Windows 用户目录、盘符或 junction；是否需要路径映射应按当前宿主的实际加载错误判断。更新优先按同一版本 DSH 的本地 bundle 更新流程处理，**不要把先移除再重装当作必要步骤**。
 
-安装后：会话里会出现「画布」标签；右侧栏「协作画布」；会话头部有画布按钮。
+安装结果中的 `application`、`warnings` 与 `nextStep` 决定是否已应用、是否需要后续操作。客户端改动是否需要重载，按当前宿主提示处理；不要仅凭 Host 工具可用就认定 UI 已加载。安装/更新后应在真实页面确认：
 
----
+1. 画布入口能打开，人与 AI 读到相同文档 id。
+2. 绘制、编辑、撤销与刷新后回读正常，冲突不会静默覆盖。
+3. 需要使用的剪贴板、导出、主题、焦点和右侧栏交互可用。
 
-## 5. 数据模型（要点）
+发布前仍需验证跨机器安装与宿主版本兼容性；这里不承诺适用于所有 DSH 版本。
 
-```js
-// 文档
-{ id, version, elements: [], annotations: [], pending: [], history: [], future: [] }
+## 文档与操作模型
 
-// 图元（rect 均为世界坐标）
-{ id, kind: 'path'|'rect'|'ellipse'|'arrow'|'text'|'note'|'group',
-  rect: [x, y, w, h], stroke, strokeWidth, fill, text,
-  rotation,          // 度，绕自身中心
-  pen: 'plain'|'marker'|'pencil'|'watercolor'|'fountain',
-  fontSize, textColor,
-  rx,                // 圆角半径
-  points,            // path/arrow 的本地坐标
-  parent }           // 组内成员
-```
+- [engine.js](<engine.js>)：无 UI 依赖的操作引擎、输入校验、几何与历史。
+- [store.js](<store.js>)：持久化适配与提交串行化。
+- [index.js](<index.js>) / [host.js](<host.js>)：Host 工具、认证路由、提示词与活动标记。
+- [client.js](<client.js>)：界面、渲染、指针/键盘交互与 Slot 注册。
+- [cordis.patch.yml](<cordis.patch.yml>)、[package.json](<package.json>)、[locale](<locale/>)、[icon.svg](<icon.svg>)：挂载、清单及显示资源。
+- [历史设计与迭代记录](<docs/intent-canvas.md>)：保留完整过程与当时的验证边界，含过时描述，不是现行安装手册。
 
-操作列表见 `engine.js` 顶部的 switch 分支，或 `docs/intent-canvas.md` §13 的迭代记录。
+文档包含 `id`、`version`、`elements`、`annotations`、`pending`、`history`、`future`。图元的 `rect: [x,y,w,h]` 使用世界坐标；path 的 `points` 使用相对自身 rect 的局部坐标；橡皮轨迹使用世界坐标。
 
----
+AI 编辑应先 `canvas_read`，用返回版本作为 `baseVersion` 调用 `canvas_apply`。一个成功批次是一条共享撤销步骤；校验失败不部分提交。遇到 `VERSION_CONFLICT` 必须重读并重新判断，不盲目重放。撤销可能影响另一方最近提交的操作。圈形提升咨询只能由可信的人类入口批准，不能在 AI 参数里冒充人类。
 
-## 6. 已知限制 / 待办
+## 边界与发布前事项
 
-- 旋转后的缩放仍按未旋转矩形计算，可能有轻微跳变
-- 多选（≥2）不提供旋转柄
-- 半圆只画上半弧（不按拖拽方向翻转）
-- 文字不自动折行（按输入换行）
-- 画布数据未做数量上限，历史上限 100 步
-- 斜杠命令 / 图片粘贴未实现
+本轮整理的检查结果、验证限制和剩余门槛见 [发布准备清单](<docs/release-readiness.md>)。当前为首版源码交付，尚不宣称稳定版发布或官方认证。
 
----
+- 旋转后缩放仍按未旋转矩形计算，可能跳变；多选不提供旋转拖柄。文字按显式换行显示，不自动折行；半圆方向固定。
+- 当前同步依赖轮询，没有远端光标、presence 或逐点广播。文档及笔迹有输入限制、历史有界，但没有大文档性能保证；会话归档不会自动删除画布文档。
+- 深浅色、窄屏、触摸、高 DPI、系统剪贴板及真实会话输入框等场景仍须在目标环境验证。历史记录中的局部截图或测试不能替代完整验收。
+- 开发中的界面和交互参考不属于运行时依赖。实际引入第三方代码或素材时，应遵守其许可证并保留必要声明。
 
-## 7. 文档
+## 参与与许可
 
-完整的**设计决策、每一轮迭代记录、验证与未验证项**都在 [docs/intent-canvas.md](docs/intent-canvas.md)。改功能时请追加一节 §13.x，写明：改了什么、为什么、测试是否覆盖、哪些还没目视验证。
+贡献方式见 [CONTRIBUTING.md](<CONTRIBUTING.md>)，安全问题处理见 [SECURITY.md](<SECURITY.md>)。
+
+本仓库选择 [MIT License](<LICENSE>)，Copyright (c) 2026 znewyear。如引入第三方代码或素材，其原有许可证和必要声明仍需遵守。

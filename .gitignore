@@ -20,3 +20,22 @@ node_modules/
 *.log
 .DS_Store
 Thumbs.db
+
+# 本地环境与敏感配置
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# 测试与打包产物
+coverage/
+*.tgz
+
+# 本项目现存的临时诊断图片（保留在本地，不上传）
+/diag-*.png
+/ours-fountain-fit2-crop.png
+/ref-strokes-all.png
+/sel-style.png
+/tooltip-fixed.png
+/v2-*.png

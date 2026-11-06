@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
+import { createLocale } from './test-support.js';
 
 const source=await readFile(new URL('./client.js',import.meta.url),'utf8');
 
@@ -20,7 +21,7 @@ async function mount(fetch,transport=true){
   if(transport)scope.__DSH_TRANSPORT__={fetch:send};
   vm.runInNewContext(source,scope);
   const plugin=module.factory(()=>React);
-  const ctx={get:name=>({slots:{inject:(_,fn)=>fn(),register:(options,component)=>registrations.push({options,component})},locale:{getLocale:()=>({active:'en'}),subscribe:()=>()=>{}},layout:{}}[name])};
+  const ctx={get:name=>({slots:{inject:(_,fn)=>fn(),register:(options,component)=>registrations.push({options,component})},locale:createLocale(),layout:{}}[name])};
   plugin.apply(ctx);
   const main=registrations.find(r=>r.options.name==='main').component();
   const canvas=main.children.find(child=>typeof child?.type==='function');

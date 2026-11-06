@@ -218,7 +218,7 @@ function execute(d, op, author, fragments) {
     case 'resolvePending': {
       const p = d.pending.find(p => p.id === op.id); if (!p || p.status !== 'open') fail('Open pending record not found', 'NOT_FOUND');
       const approval = op.approved ?? (op.resolution !== 'rejected' && op.resolution !== 'reject');
-      if (approval && p.type === 'consultation' && !human(author)) fail('Only a human may approve consultation', 'FORBIDDEN');
+      if (approval && !human(author)) fail('Only a human may approve a pending decision', 'FORBIDDEN');
       if (approval && p.operation) { if (p.operation.type !== 'promote') fail('Unsupported pending action'); execute(d, { ...p.operation, approved: true }, author, fragments); }
       p.status = approval ? 'approved' : 'rejected'; p.resolvedBy = copy(author); break;
     }

@@ -1,12 +1,27 @@
 {
   "name": "@local/intent-canvas",
-  "version": "1.0.85",
+  "version": "1.0.91",
   "private": true,
   "type": "module",
   "description": "Collaborative human+AI canvas plugin for DeepSeek Harness (shared document, durable ops, local stroke erasure, pen styles, export)",
   "keywords": ["dsh-plugin", "canvas", "collaboration", "whiteboard"],
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/znewyear/dsh-canvas.git" },
+  "bugs": { "url": "https://github.com/znewyear/dsh-canvas/issues" },
+  "homepage": "https://github.com/znewyear/dsh-canvas#readme",
+  "engines": { "node": ">=22", "dsh": "0.2.2-rc.1" },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-storage-domain": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
+    "zod": "^4.4.3"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-storage-domain": { "optional": true },
+    "@deepseek-ai/dsh-tools": { "optional": true },
+    "zod": { "optional": true }
+  },
   "scripts": {
-    "test": "node --test engine.test.js store.test.js client.test.js client.transport.test.js client.interaction.test.js"
+    "test": "node --test engine.test.js store.test.js host.test.js package.test.js client.test.js client.transport.test.js client.interaction.test.js"
   },
   "exports": {".": "./index.js", "./client": "./client.js", "./locale/*.json": "./locale/*.json", "./icon": "./icon.svg"},
   "files": ["host.js", "index.js", "store.js", "client.js", "engine.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "docs"],

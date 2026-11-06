@@ -144,6 +144,21 @@ test('explicit circle promotion requires consultation approval by human', () => 
   assert.equal(d.pending[1].status, 'rejected'); assert.equal(d.annotations[0].status, 'resolved');
 });
 
+test('all pending kinds require human approval, including custom records', () => {
+  for (const pending of [
+    { type: 'raisePending', id: 'q', kind: 'custom', message: 'Confirm this' },
+    { type: 'raisePending', pending: { id: 'q', type: 'custom', message: 'Confirm this' } }
+  ]) {
+    const d = run(initialDocument(), [pending], 'ai').document;
+    for (const resolution of [{ approved: true }, { resolution: 'approved' }, {}]) {
+      assert.throws(() => run(d, [{ type: 'resolvePending', id: 'q', ...resolution }], 'ai'), { code: 'FORBIDDEN' });
+    }
+    assert.equal(d.pending[0].status, 'open');
+    assert.equal(run(d, [{ type: 'resolvePending', id: 'q', approved: false }], 'ai').document.pending[0].status, 'rejected');
+    assert.equal(run(d, [{ type: 'resolvePending', id: 'q', approved: true }], 'human').document.pending[0].status, 'approved');
+  }
+});
+
 test('undo and redo are cross-author content-only snapshots and branch clears redo', () => {
   let d = seed(box('a'));
   d = run(d, [{ type: 'move', id: 'a', dx: 20, dy: 0 }], 'ai').document;

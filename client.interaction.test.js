@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
+import { createLocale } from './test-support.js';
 
 const source=await readFile(new URL('./client.js',import.meta.url),'utf8');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 
 // Drives the mounted panel with real pointer/keyboard handlers so the gesture code, not a copy of it, produces the operations.
-function harness({session,activity}={}){
+function harness({session,activity,inputActions,locale=createLocale()}={}){
   let module,cursor=0;const states=[],refs=[],effects=[],registrations=[],calls=[];
   const el=()=>({focus(){},getBoundingClientRect:()=>({left:0,top:0}),clientWidth:800,clientHeight:600,setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false,style:{}});
   const React={Fragment:'fragment',createElement:(type,props,...children)=>({type,props,children}),
@@ -32,10 +33,10 @@ function harness({session,activity}={}){
   vm.runInNewContext(source,{window:{__ModuleLoader__:{load:value=>{module=value;}},addEventListener(){},removeEventListener(){}},setInterval:()=>1,clearInterval(){},setTimeout:()=>0,clearTimeout(){},__DSH_TRANSPORT__:{fetch}});
   const plugin=module.factory(()=>React);
   const sessions={retain:(id,options)=>({ready:Promise.resolve(),release(){},binding:{session:{prompt:async(content,mode)=>{calls.push(['prompt',id,options,content,mode]);return {ok:true};}}}})};
-  plugin.apply({get:name=>({slots:{inject:(_,fn)=>fn(),register:(options,component)=>registrations.push({options,component})},locale:{getLocale:()=>({active:'en'}),subscribe:()=>()=>{}},layout:{},sessions})[name]});
+  plugin.apply({get:name=>({slots:{inject:(_,fn)=>fn(),register:(options,component)=>registrations.push({options,component})},locale,layout:{},sessions})[name]});
   const main=registrations.find(r=>r.options.name==='main').component();
   const canvas=main.children.find(child=>typeof child?.type==='function');
-  const render=()=>{cursor=0;return canvas.type(session?{...canvas.props,sessionId:session}:canvas.props);};
+  const render=()=>{cursor=0;return canvas.type(session?{...canvas.props,sessionId:session,inputActions}:canvas.props);};
   render();
   effects.splice(0).forEach(fn=>fn?.());
   return {render,calls};
@@ -358,19 +359,79 @@ test('rotate mode turns any drag into a rotation and repeats',async()=>{
   assert.ok(Math.abs(second.patch.rotation-180)<1,'angles accumulate');
 });
 
-test('the pen size slider sets the stroke width',async()=>{
+test('the pen size popover sets the stroke width',async()=>{
   const panel=harness();
   await tick();
   let tree=panel.render();
   tree.props.onKeyDown(key('p'));
   tree=panel.render();
-  const slider=nodes(tree).find(n=>n.props?.['aria-label']==='Pen size');
-  assert.ok(slider,'the pen offers a size slider');
+  const sizeButton=button(tree,'Pen size');
+  assert.ok(sizeButton,'the pen offers a size control');
+  sizeButton.props.onClick();
+  tree=panel.render();
+  const slider=nodes(tree).find(n=>n.type==='input'&&n.props?.['aria-label']==='Pen size');
+  assert.ok(slider,'the size popover offers a slider');
   slider.props.onChange({target:{value:'7'}});
   tree=panel.render();
   await gesture(panel,[[100,100],[200,120],[300,140]]);
   const element=panel.calls.at(-1)[1].ops[0].element;
   assert.equal(element.strokeWidth,7);
+});
+
+test('the pen type popover selects one of five pen kinds',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  tree=panel.render();
+  button(tree,'Pen type').props.onClick();
+  tree=panel.render();
+  const kinds=nodes(tree).filter(n=>n.props?.role==='menuitem');
+  assert.deepEqual(kinds.map(n=>n.props['aria-label']),['Plain','Marker','Pencil','Watercolor','Fountain pen']);
+  assert.equal(kinds[0].props['aria-pressed'],true,'plain is the default pen');
+  kinds[4].props.onClick();
+  tree=panel.render();
+  await gesture(panel,[[100,100],[220,130]]);
+  assert.equal(panel.calls.at(-1)[1].ops[0].element.pen,'fountain');
+});
+
+test('the pen colour popover applies presets and offers a custom picker',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  tree=panel.render();
+  button(tree,'Pen color').props.onClick();
+  tree=panel.render();
+  const presets=nodes(tree).filter(n=>n.type==='button'&&/^#[0-9a-f]{6}$/.test(n.props?.['aria-label']||''));
+  assert.equal(presets.length,17,'the palette lists 17 presets plus the custom picker');
+  assert.ok(nodes(tree).some(n=>n.props?.['aria-label']==='Custom color'),'a custom colour picker is offered');
+  presets[4].props.onClick();
+  tree=panel.render();
+  await gesture(panel,[[100,100],[220,130]]);
+  assert.equal(panel.calls.at(-1)[1].ops[0].element.stroke,'#e03131');
+});
+
+test('shape style controls update the selected shape',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('r'));
+  tree=panel.render();
+  await gesture(panel,[[100,100],[220,180]]);
+  tree=panel.render();
+  const created=panel.calls.at(-1)[1].ops[0];
+  assert.equal(created.type,'create');
+  button(tree,'Border color').props.onClick();
+  tree=panel.render();
+  const swatch=nodes(tree).find(n=>n.type==='button'&&n.props?.['aria-label']==='#e03131');
+  assert.ok(swatch,'the border palette opens next to the shape params');
+  swatch.props.onClick();
+  await tick();
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'update','picking a border colour edits the selection');
+  assert.equal(op.patch.stroke,'#e03131');
+  assert.equal(op.id,created.element.id);
 });
 
 test('whole erase removes everything it touches in one operation',async()=>{
@@ -492,6 +553,26 @@ test('the send shortcut also offers filling the composer',async()=>{
   assert.equal(panel.calls.filter(c=>c[0]==='prompt').length,0,'filling does not send');
 });
 
+test('fill uses the session editor API without replacing the selected draft or sending',async()=>{
+  const inserted=[];
+  const inputActions={captureInsertion:()=>({start:2,end:7,draftRev:12}),insertText:(text,span)=>{inserted.push({text,span});return true;}};
+  const panel=harness({session:'session-abc',inputActions});
+  await tick();
+  await button(panel.render(),'Fill input').props.onClick();
+  assert.equal(inserted.length,1);
+  assert.match(inserted[0].text,/s-session-abc/);
+  assert.deepEqual({...inserted[0].span},{start:7,end:7,draftRev:12});
+  assert.equal(panel.calls.filter(c=>c[0]==='prompt').length,0);
+});
+
+test('fill reports editor rejection without sending or overwriting the draft',async()=>{
+  const panel=harness({session:'session-abc',inputActions:{captureInsertion:()=>({start:0,end:0,draftRev:1}),insertText:()=>false}});
+  await tick();
+  await button(panel.render(),'Fill input').props.onClick();
+  assert.match(text(nodes(panel.render()).find(n=>n.props?.role==='alert')),/busy or changed/);
+  assert.equal(panel.calls.filter(c=>c[0]==='prompt').length,0);
+});
+
 test('one canvas click sends the session a message',async()=>{
   const panel=harness({session:'session-abc'});
   await tick();
@@ -511,4 +592,24 @@ test('the panel shows when the AI is editing',async()=>{
   const panel=harness({session:'session-abc',activity:{author:'ai',at:Date.now(),version:2}});
   await tick();
   assert.match(text(panel.render()),/AI is editing/);
+});
+
+
+test('mounted panel follows locale revisions for controls and generated chat text',async()=>{
+  const locale=createLocale('en'),inserted=[];
+  const panel=harness({session:'locale-session',locale,inputActions:{captureInsertion:()=>({start:0,end:0}),insertText:value=>{inserted.push(value);return true;}}});
+  await tick();
+  assert.ok(button(panel.render(),'Fill input'));
+  locale.setLocale('zh-CN');
+  let tree=panel.render();
+  assert.ok(button(tree,'填入输入框'));
+  assert.ok(button(tree,'发给 AI'));
+  await button(tree,'填入输入框').props.onClick();
+  assert.match(inserted[0],/我在画布上画了\/改了内容/);
+  assert.match(inserted[0],/s-locale-session/);
+  locale.setLocale('en');
+  tree=panel.render();
+  await button(tree,'Fill input').props.onClick();
+  assert.match(inserted[1],/I drew or edited the canvas/);
+  assert.match(inserted[1],/Please read this canvas and continue/);
 });
