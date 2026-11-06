@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1040" viewBox="0 0 1600 1040" role="img" aria-labelledby="title desc"><title id="title">One canvas. Two perspectives.</title><desc id="desc">Editable explanatory diagram showing human sketching, a versioned shared document, AI tools, and an explicit human approval gate. Not an application screenshot.</desc><defs><marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7" fill="#24745c"/></marker></defs><g font-family="Segoe UI, Arial, sans-serif"><rect x="0" y="0" width="1600" height="1040" rx="18" fill="#f4f5ef" stroke="#f4f5ef" stroke-width="1"/>
+<text x="64" y="69" font-size="15" fill="#24745c" font-weight="400">DSH CANVAS  /  SYSTEM DESIGN STUDY 01</text>
+<text x="60" y="155" font-size="56" fill="#203b36" font-weight="600">One canvas. Two perspectives.</text>
+<text x="64" y="199" font-size="21" fill="#687c74" font-weight="400">From a rough thought to a shared decision — without losing the conversation.</text>
+<rect x="64" y="266" width="430" height="480" rx="18" fill="#fffef9" stroke="#d6dfd7" stroke-width="1"/>
+<rect x="554" y="266" width="492" height="480" rx="18" fill="#e5eee5" stroke="#c4d5c7" stroke-width="1"/>
+<rect x="1106" y="266" width="430" height="480" rx="18" fill="#fffef9" stroke="#d6dfd7" stroke-width="1"/>
+<text x="92" y="308" font-size="14" fill="#24745c" font-weight="400">01  /  HUMAN</text>
+<text x="92" y="368" font-size="30" fill="#203b36" font-weight="600">Sketch the intent</text>
+<text x="92" y="412" font-size="19" fill="#687c74" font-weight="400">Draw · annotate · reshape</text>
+<rect x="100" y="464" width="350" height="124" rx="18" fill="#f0f2e9" stroke="#d6dfd7" stroke-width="1"/>
+<rect x="120" y="484" width="68" height="82" rx="18" fill="#d9e6d5" stroke="#d9e6d5" stroke-width="1"/>
+<rect x="208" y="488" width="210" height="12" rx="18" fill="#b8cbb9" stroke="#b8cbb9" stroke-width="1"/>
+<rect x="208" y="516" width="164" height="9" rx="18" fill="#d1dbca" stroke="#d1dbca" stroke-width="1"/>
+<rect x="208" y="540" width="188" height="9" rx="18" fill="#d1dbca" stroke="#d1dbca" stroke-width="1"/>
+<text x="100" y="642" font-size="16" fill="#24745c" font-weight="400">“Keep the idea. Change the form.”</text>
+<text x="100" y="706" font-size="14" fill="#687c74" font-weight="400">Pen / shapes / notes / text</text>
+<text x="584" y="308" font-size="14" fill="#24745c" font-weight="400">02  /  SHARED DOCUMENT</text>
+<text x="584" y="368" font-size="30" fill="#203b36" font-weight="600">The common ground</text>
+<text x="584" y="412" font-size="19" fill="#687c74" font-weight="400">Stable elements. Explicit operations.</text>
+<rect x="584" y="452" width="432" height="62" rx="18" fill="#f6f9f1" stroke="#d3dfcf" stroke-width="1"/>
+<text x="602" y="479" font-size="14" fill="#24745c" font-weight="400">READ</text>
+<text x="738" y="479" font-size="14" fill="#203b36" font-weight="400">Inspect the current version</text>
+<rect x="584" y="532" width="432" height="62" rx="18" fill="#f6f9f1" stroke="#d3dfcf" stroke-width="1"/>
+<text x="602" y="559" font-size="14" fill="#24745c" font-weight="400">RECONCILE</text>
+<text x="738" y="559" font-size="14" fill="#203b36" font-weight="400">Propose one atomic batch</text>
+<rect x="584" y="612" width="432" height="62" rx="18" fill="#f6f9f1" stroke="#d3dfcf" stroke-width="1"/>
+<text x="602" y="639" font-size="14" fill="#24745c" font-weight="400">COMMIT</text>
+<text x="738" y="639" font-size="14" fill="#203b36" font-weight="400">Persist or return a conflict</text>
+<text x="584" y="722" font-size="12" fill="#24745c" font-weight="400">ONE VERSION  /  ONE SHARED UNDO STEP</text>
+<text x="1136" y="308" font-size="14" fill="#24745c" font-weight="400">03  /  AI</text>
+<text x="1136" y="368" font-size="30" fill="#203b36" font-weight="600">Make it precise</text>
+<text x="1136" y="412" font-size="19" fill="#687c74" font-weight="400">Read · reason · edit</text>
+<rect x="1136" y="452" width="368" height="162" rx="18" fill="#203b36" stroke="#203b36" stroke-width="1"/>
+<text x="1158" y="494" font-size="20" fill="#d9eacb" font-weight="400">canvas_read()</text>
+<text x="1158" y="531" font-size="17" fill="#b9cbc0" font-weight="400">baseVersion: current</text>
+<text x="1158" y="574" font-size="20" fill="#d9eacb" font-weight="400">canvas_apply({ ops })</text>
+<text x="1136" y="661" font-size="17" fill="#24745c" font-weight="400">Same objects. Same history.</text>
+<text x="1136" y="706" font-size="14" fill="#687c74" font-weight="400">No separate AI-only whiteboard</text>
+<path d="M502,510 L546,510" fill="none" stroke="#24745c" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M1054,510 L1098,510" fill="none" stroke="#24745c" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="64" y="792" width="1472" height="148" rx="18" fill="#ece8d8" stroke="#e0dbc7" stroke-width="1"/>
+<text x="94" y="831" font-size="13" fill="#8a6a2d" font-weight="400">THE HUMAN GATE</text>
+<text x="94" y="880" font-size="27" fill="#203b36" font-weight="600">Suggestions are not approvals.</text>
+<text x="832" y="849" font-size="18" fill="#203b36" font-weight="400">Circle → consultation → explicit human choice</text>
+<text x="832" y="887" font-size="14" fill="#687c74" font-weight="400">Keep the drawing, make a card, or group the enclosed items.</text>
+<text x="64" y="994" font-size="13" fill="#687c74" font-weight="400">EDITABLE EXAMPLE  /  Generated with the dsh-canvas document engine</text>
+<text x="1250" y="993" font-size="12" fill="#687c74" font-weight="400">Not an application screenshot</text></g></svg>

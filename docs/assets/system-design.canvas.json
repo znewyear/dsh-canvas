@@ -1,0 +1,673 @@
+{
+  "id": "demo-system-design",
+  "version": 1,
+  "elements": [
+    {
+      "id": "paper",
+      "kind": "rect",
+      "rect": [
+        0,
+        0,
+        1600,
+        1040
+      ],
+      "fill": "#f4f5ef",
+      "stroke": "#f4f5ef",
+      "strokeWidth": 1,
+      "rx": 18
+    },
+    {
+      "id": "eyebrow",
+      "kind": "text",
+      "rect": [
+        64,
+        54,
+        900,
+        22.5
+      ],
+      "text": "DSH CANVAS  /  SYSTEM DESIGN STUDY 01",
+      "fontSize": 15,
+      "textColor": "#24745c"
+    },
+    {
+      "id": "headline",
+      "kind": "text",
+      "rect": [
+        60,
+        99,
+        1400,
+        84
+      ],
+      "text": "One canvas. Two perspectives.",
+      "fontSize": 56,
+      "textColor": "#203b36"
+    },
+    {
+      "id": "subtitle",
+      "kind": "text",
+      "rect": [
+        64,
+        178,
+        1400,
+        31.5
+      ],
+      "text": "From a rough thought to a shared decision — without losing the conversation.",
+      "fontSize": 21,
+      "textColor": "#687c74"
+    },
+    {
+      "id": "human-surface",
+      "kind": "rect",
+      "rect": [
+        64,
+        266,
+        430,
+        480
+      ],
+      "fill": "#fffef9",
+      "stroke": "#d6dfd7",
+      "strokeWidth": 1,
+      "rx": 18
+    },
+    {
+      "id": "shared-surface",
+      "kind": "rect",
+      "rect": [
+        554,
+        266,
+        492,
+        480
+      ],
+      "fill": "#e5eee5",
+      "stroke": "#c4d5c7",
+      "strokeWidth": 1,
+      "rx": 18
+    },
+    {
+      "id": "ai-surface",
+      "kind": "rect",
+      "rect": [
+        1106,
+        266,
+        430,
+        480
+      ],
+      "fill": "#fffef9",
+      "stroke": "#d6dfd7",
+      "strokeWidth": 1,
+      "rx": 18
+    },
+    {
+      "id": "human-index",
+      "kind": "text",
+      "rect": [
+        92,
+        294,
+        300,
+        21
+      ],
+      "text": "01  /  HUMAN",
+      "fontSize": 14,
+      "textColor": "#24745c"
+    },
+    {
+      "id": "human-title",
+      "kind": "text",
+      "rect": [
+        92,
+        338,
+        370,
+        45
+      ],
+      "text": "Sketch the intent",
+      "fontSize": 30,
+      "textColor": "#203b36"
+    },
+    {
+      "id": "human-body",
+      "kind": "text",
+      "rect": [
+        92,
+        393,
+        360,
+        28.5
+      ],
+      "text": "Draw · annotate · reshape",
+      "fontSize": 19,
+      "textColor": "#687c74"
+    },
+    {
+      "id": "wireframe",
+      "kind": "rect",
+      "rect": [
+        100,
+        464,
+        350,
+        124
+      ],
+      "fill": "#f0f2e9",
+      "stroke": "#d6dfd7",
+      "strokeWidth": 1,
+      "rx": 18
+    },
+    {
+      "id": "wireframe-icon",
+      "kind": "rect",
+      "rect": [
+        120,
+        484,
+        68,
+        82
+      ],
+      "fill": "#d9e6d5",
+      "stroke": "#d9e6d5",
+      "strokeWidth": 1,
+      "rx": 18
+    },
+    {
+      "id": "wireframe-line1",
+      "kind": "rect",
+      "rect": [
+        208,
+        488,
+        210,
+        12
+      ],
+      "fill": "#b8cbb9",
+      "stroke": "#b8cbb9",
+      "strokeWidth": 1,
+      "rx": 18
+    },
+    {
+      "id": "wireframe-line2",
+      "kind": "rect",
+      "rect": [
+        208,
+        516,
+        164,
+        9
+      ],
+      "fill": "#d1dbca",
+      "stroke": "#d1dbca",
+      "strokeWidth": 1,
+      "rx": 18
+    },
+    {
+      "id": "wireframe-line3",
+      "kind": "rect",
+      "rect": [
+        208,
+        540,
+        188,
+        9
+      ],
+      "fill": "#d1dbca",
+      "stroke": "#d1dbca",
+      "strokeWidth": 1,
+      "rx": 18
+    },
+    {
+      "id": "human-note",
+      "kind": "text",
+      "rect": [
+        100,
+        626,
+        360,
+        24
+      ],
+      "text": "“Keep the idea. Change the form.”",
+      "fontSize": 16,
+      "textColor": "#24745c"
+    },
+    {
+      "id": "human-foot",
+      "kind": "text",
+      "rect": [
+        100,
+        692,
+        350,
+        21
+      ],
+      "text": "Pen / shapes / notes / text",
+      "fontSize": 14,
+      "textColor": "#687c74"
+    },
+    {
+      "id": "shared-index",
+      "kind": "text",
+      "rect": [
+        584,
+        294,
+        420,
+        21
+      ],
+      "text": "02  /  SHARED DOCUMENT",
+      "fontSize": 14,
+      "textColor": "#24745c"
+    },
+    {
+      "id": "shared-title",
+      "kind": "text",
+      "rect": [
+        584,
+        338,
+        420,
+        45
+      ],
+      "text": "The common ground",
+      "fontSize": 30,
+      "textColor": "#203b36"
+    },
+    {
+      "id": "shared-body",
+      "kind": "text",
+      "rect": [
+        584,
+        393,
+        420,
+        28.5
+      ],
+      "text": "Stable elements. Explicit operations.",
+      "fontSize": 19,
+      "textColor": "#687c74"
+    },
+    {
+      "id": "step-0",
+      "kind": "rect",
+      "rect": [
+        584,
+        452,
+        432,
+        62
+      ],
+      "fill": "#f6f9f1",
+      "stroke": "#d3dfcf",
+      "strokeWidth": 1,
+      "rx": 18
+    },
+    {
+      "id": "step-label-0",
+      "kind": "text",
+      "rect": [
+        602,
+        465,
+        130,
+        21
+      ],
+      "text": "READ",
+      "fontSize": 14,
+      "textColor": "#24745c"
+    },
+    {
+      "id": "step-detail-0",
+      "kind": "text",
+      "rect": [
+        738,
+        465,
+        260,
+        21
+      ],
+      "text": "Inspect the current version",
+      "fontSize": 14,
+      "textColor": "#203b36"
+    },
+    {
+      "id": "step-1",
+      "kind": "rect",
+      "rect": [
+        584,
+        532,
+        432,
+        62
+      ],
+      "fill": "#f6f9f1",
+      "stroke": "#d3dfcf",
+      "strokeWidth": 1,
+      "rx": 18
+    },
+    {
+      "id": "step-label-1",
+      "kind": "text",
+      "rect": [
+        602,
+        545,
+        130,
+        21
+      ],
+      "text": "RECONCILE",
+      "fontSize": 14,
+      "textColor": "#24745c"
+    },
+    {
+      "id": "step-detail-1",
+      "kind": "text",
+      "rect": [
+        738,
+        545,
+        260,
+        21
+      ],
+      "text": "Propose one atomic batch",
+      "fontSize": 14,
+      "textColor": "#203b36"
+    },
+    {
+      "id": "step-2",
+      "kind": "rect",
+      "rect": [
+        584,
+        612,
+        432,
+        62
+      ],
+      "fill": "#f6f9f1",
+      "stroke": "#d3dfcf",
+      "strokeWidth": 1,
+      "rx": 18
+    },
+    {
+      "id": "step-label-2",
+      "kind": "text",
+      "rect": [
+        602,
+        625,
+        130,
+        21
+      ],
+      "text": "COMMIT",
+      "fontSize": 14,
+      "textColor": "#24745c"
+    },
+    {
+      "id": "step-detail-2",
+      "kind": "text",
+      "rect": [
+        738,
+        625,
+        260,
+        21
+      ],
+      "text": "Persist or return a conflict",
+      "fontSize": 14,
+      "textColor": "#203b36"
+    },
+    {
+      "id": "shared-foot",
+      "kind": "text",
+      "rect": [
+        584,
+        710,
+        430,
+        18
+      ],
+      "text": "ONE VERSION  /  ONE SHARED UNDO STEP",
+      "fontSize": 12,
+      "textColor": "#24745c"
+    },
+    {
+      "id": "ai-index",
+      "kind": "text",
+      "rect": [
+        1136,
+        294,
+        340,
+        21
+      ],
+      "text": "03  /  AI",
+      "fontSize": 14,
+      "textColor": "#24745c"
+    },
+    {
+      "id": "ai-title",
+      "kind": "text",
+      "rect": [
+        1136,
+        338,
+        350,
+        45
+      ],
+      "text": "Make it precise",
+      "fontSize": 30,
+      "textColor": "#203b36"
+    },
+    {
+      "id": "ai-body",
+      "kind": "text",
+      "rect": [
+        1136,
+        393,
+        350,
+        28.5
+      ],
+      "text": "Read · reason · edit",
+      "fontSize": 19,
+      "textColor": "#687c74"
+    },
+    {
+      "id": "code-card",
+      "kind": "rect",
+      "rect": [
+        1136,
+        452,
+        368,
+        162
+      ],
+      "fill": "#203b36",
+      "stroke": "#203b36",
+      "strokeWidth": 1,
+      "rx": 18
+    },
+    {
+      "id": "code-read",
+      "kind": "text",
+      "rect": [
+        1158,
+        474,
+        325,
+        30
+      ],
+      "text": "canvas_read()",
+      "fontSize": 20,
+      "textColor": "#d9eacb"
+    },
+    {
+      "id": "code-version",
+      "kind": "text",
+      "rect": [
+        1158,
+        514,
+        325,
+        25.5
+      ],
+      "text": "baseVersion: current",
+      "fontSize": 17,
+      "textColor": "#b9cbc0"
+    },
+    {
+      "id": "code-apply",
+      "kind": "text",
+      "rect": [
+        1158,
+        554,
+        325,
+        30
+      ],
+      "text": "canvas_apply({ ops })",
+      "fontSize": 20,
+      "textColor": "#d9eacb"
+    },
+    {
+      "id": "ai-note",
+      "kind": "text",
+      "rect": [
+        1136,
+        644,
+        350,
+        25.5
+      ],
+      "text": "Same objects. Same history.",
+      "fontSize": 17,
+      "textColor": "#24745c"
+    },
+    {
+      "id": "ai-foot",
+      "kind": "text",
+      "rect": [
+        1136,
+        692,
+        350,
+        21
+      ],
+      "text": "No separate AI-only whiteboard",
+      "fontSize": 14,
+      "textColor": "#687c74"
+    },
+    {
+      "id": "human-to-shared",
+      "kind": "arrow",
+      "rect": [
+        502,
+        510,
+        44,
+        0
+      ],
+      "stroke": "#24745c",
+      "strokeWidth": 2,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          44,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "shared-to-ai",
+      "kind": "arrow",
+      "rect": [
+        1054,
+        510,
+        44,
+        0
+      ],
+      "stroke": "#24745c",
+      "strokeWidth": 2,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          44,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "decision-band",
+      "kind": "rect",
+      "rect": [
+        64,
+        792,
+        1472,
+        148
+      ],
+      "fill": "#ece8d8",
+      "stroke": "#e0dbc7",
+      "strokeWidth": 1,
+      "rx": 18
+    },
+    {
+      "id": "decision-index",
+      "kind": "text",
+      "rect": [
+        94,
+        818,
+        210,
+        19.5
+      ],
+      "text": "THE HUMAN GATE",
+      "fontSize": 13,
+      "textColor": "#8a6a2d"
+    },
+    {
+      "id": "decision-title",
+      "kind": "text",
+      "rect": [
+        94,
+        853,
+        650,
+        40.5
+      ],
+      "text": "Suggestions are not approvals.",
+      "fontSize": 27,
+      "textColor": "#203b36"
+    },
+    {
+      "id": "decision-detail",
+      "kind": "text",
+      "rect": [
+        832,
+        831,
+        650,
+        27
+      ],
+      "text": "Circle → consultation → explicit human choice",
+      "fontSize": 18,
+      "textColor": "#203b36"
+    },
+    {
+      "id": "decision-caption",
+      "kind": "text",
+      "rect": [
+        832,
+        873,
+        650,
+        21
+      ],
+      "text": "Keep the drawing, make a card, or group the enclosed items.",
+      "fontSize": 14,
+      "textColor": "#687c74"
+    },
+    {
+      "id": "footer-left",
+      "kind": "text",
+      "rect": [
+        64,
+        981,
+        1050,
+        19.5
+      ],
+      "text": "EDITABLE EXAMPLE  /  Generated with the dsh-canvas document engine",
+      "fontSize": 13,
+      "textColor": "#687c74"
+    },
+    {
+      "id": "footer-right",
+      "kind": "text",
+      "rect": [
+        1250,
+        981,
+        300,
+        18
+      ],
+      "text": "Not an application screenshot",
+      "fontSize": 12,
+      "textColor": "#687c74"
+    }
+  ],
+  "annotations": [],
+  "pending": [],
+  "history": [
+    {
+      "version": 0,
+      "elements": [],
+      "annotations": [],
+      "pending": []
+    }
+  ],
+  "future": []
+}

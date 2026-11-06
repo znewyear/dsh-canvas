@@ -1,0 +1,477 @@
+{
+  "description": "Engine-verified states, not UI screenshots",
+  "erase": {
+    "before": {
+      "id": "demo-erase",
+      "version": 1,
+      "elements": [
+        {
+          "id": "stroke",
+          "kind": "path",
+          "rect": [
+            0,
+            0,
+            360,
+            100
+          ],
+          "points": [
+            [
+              0,
+              70
+            ],
+            [
+              60,
+              20
+            ],
+            [
+              120,
+              75
+            ],
+            [
+              180,
+              25
+            ],
+            [
+              240,
+              80
+            ],
+            [
+              300,
+              15
+            ],
+            [
+              360,
+              65
+            ]
+          ],
+          "stroke": "#24745c",
+          "strokeWidth": 8
+        }
+      ],
+      "annotations": [],
+      "pending": [],
+      "history": [
+        {
+          "version": 0,
+          "elements": [],
+          "annotations": [],
+          "pending": []
+        }
+      ],
+      "future": []
+    },
+    "after": {
+      "id": "demo-erase",
+      "version": 2,
+      "elements": [
+        {
+          "id": "stroke",
+          "kind": "path",
+          "rect": [
+            0,
+            20,
+            151,
+            55
+          ],
+          "points": [
+            [
+              0,
+              50
+            ],
+            [
+              60,
+              0
+            ],
+            [
+              120,
+              55
+            ],
+            [
+              151,
+              29.166666666666664
+            ]
+          ],
+          "stroke": "#24745c",
+          "strokeWidth": 8
+        },
+        {
+          "id": "stroke-fragment-1",
+          "kind": "path",
+          "rect": [
+            209,
+            15,
+            151,
+            65
+          ],
+          "points": [
+            [
+              0,
+              36.58333333333333
+            ],
+            [
+              31,
+              65
+            ],
+            [
+              91,
+              0
+            ],
+            [
+              151,
+              50
+            ]
+          ],
+          "stroke": "#24745c",
+          "strokeWidth": 8
+        }
+      ],
+      "annotations": [],
+      "pending": [],
+      "history": [
+        {
+          "version": 0,
+          "elements": [],
+          "annotations": [],
+          "pending": []
+        },
+        {
+          "version": 1,
+          "elements": [
+            {
+              "id": "stroke",
+              "kind": "path",
+              "rect": [
+                0,
+                0,
+                360,
+                100
+              ],
+              "points": [
+                [
+                  0,
+                  70
+                ],
+                [
+                  60,
+                  20
+                ],
+                [
+                  120,
+                  75
+                ],
+                [
+                  180,
+                  25
+                ],
+                [
+                  240,
+                  80
+                ],
+                [
+                  300,
+                  15
+                ],
+                [
+                  360,
+                  65
+                ]
+              ],
+              "stroke": "#24745c",
+              "strokeWidth": 8
+            }
+          ],
+          "annotations": [],
+          "pending": []
+        }
+      ],
+      "future": []
+    },
+    "undo": {
+      "id": "demo-erase",
+      "version": 3,
+      "elements": [
+        {
+          "id": "stroke",
+          "kind": "path",
+          "rect": [
+            0,
+            0,
+            360,
+            100
+          ],
+          "points": [
+            [
+              0,
+              70
+            ],
+            [
+              60,
+              20
+            ],
+            [
+              120,
+              75
+            ],
+            [
+              180,
+              25
+            ],
+            [
+              240,
+              80
+            ],
+            [
+              300,
+              15
+            ],
+            [
+              360,
+              65
+            ]
+          ],
+          "stroke": "#24745c",
+          "strokeWidth": 8
+        }
+      ],
+      "annotations": [],
+      "pending": [],
+      "history": [
+        {
+          "version": 0,
+          "elements": [],
+          "annotations": [],
+          "pending": []
+        }
+      ],
+      "future": [
+        {
+          "version": 2,
+          "elements": [
+            {
+              "id": "stroke",
+              "kind": "path",
+              "rect": [
+                0,
+                20,
+                151,
+                55
+              ],
+              "points": [
+                [
+                  0,
+                  50
+                ],
+                [
+                  60,
+                  0
+                ],
+                [
+                  120,
+                  55
+                ],
+                [
+                  151,
+                  29.166666666666664
+                ]
+              ],
+              "stroke": "#24745c",
+              "strokeWidth": 8
+            },
+            {
+              "id": "stroke-fragment-1",
+              "kind": "path",
+              "rect": [
+                209,
+                15,
+                151,
+                65
+              ],
+              "points": [
+                [
+                  0,
+                  36.58333333333333
+                ],
+                [
+                  31,
+                  65
+                ],
+                [
+                  91,
+                  0
+                ],
+                [
+                  151,
+                  50
+                ]
+              ],
+              "stroke": "#24745c",
+              "strokeWidth": 8
+            }
+          ],
+          "annotations": [],
+          "pending": []
+        }
+      ]
+    }
+  },
+  "approval": {
+    "proposed": {
+      "id": "demo-approval",
+      "version": 2,
+      "elements": [
+        {
+          "id": "idea",
+          "kind": "ellipse",
+          "rect": [
+            0,
+            0,
+            120,
+            90
+          ],
+          "stroke": "#24745c",
+          "fill": "#e5eee5"
+        }
+      ],
+      "annotations": [],
+      "pending": [
+        {
+          "id": "consultation-1",
+          "type": "consultation",
+          "status": "open",
+          "elementId": "idea",
+          "message": "Promote this circle?",
+          "operation": {
+            "type": "promote",
+            "id": "idea",
+            "to": "card"
+          },
+          "author": "ai"
+        }
+      ],
+      "history": [
+        {
+          "version": 0,
+          "elements": [],
+          "annotations": [],
+          "pending": []
+        },
+        {
+          "version": 1,
+          "elements": [
+            {
+              "id": "idea",
+              "kind": "ellipse",
+              "rect": [
+                0,
+                0,
+                120,
+                90
+              ],
+              "stroke": "#24745c",
+              "fill": "#e5eee5"
+            }
+          ],
+          "annotations": [],
+          "pending": []
+        }
+      ],
+      "future": []
+    },
+    "approved": {
+      "id": "demo-approval",
+      "version": 3,
+      "elements": [
+        {
+          "id": "idea",
+          "kind": "card",
+          "rect": [
+            0,
+            0,
+            120,
+            90
+          ],
+          "stroke": "#24745c",
+          "fill": "#e5eee5"
+        }
+      ],
+      "annotations": [],
+      "pending": [
+        {
+          "id": "consultation-1",
+          "type": "consultation",
+          "status": "approved",
+          "elementId": "idea",
+          "message": "Promote this circle?",
+          "operation": {
+            "type": "promote",
+            "id": "idea",
+            "to": "card"
+          },
+          "author": "ai",
+          "resolvedBy": "human"
+        }
+      ],
+      "history": [
+        {
+          "version": 0,
+          "elements": [],
+          "annotations": [],
+          "pending": []
+        },
+        {
+          "version": 1,
+          "elements": [
+            {
+              "id": "idea",
+              "kind": "ellipse",
+              "rect": [
+                0,
+                0,
+                120,
+                90
+              ],
+              "stroke": "#24745c",
+              "fill": "#e5eee5"
+            }
+          ],
+          "annotations": [],
+          "pending": []
+        },
+        {
+          "version": 2,
+          "elements": [
+            {
+              "id": "idea",
+              "kind": "ellipse",
+              "rect": [
+                0,
+                0,
+                120,
+                90
+              ],
+              "stroke": "#24745c",
+              "fill": "#e5eee5"
+            }
+          ],
+          "annotations": [],
+          "pending": [
+            {
+              "id": "consultation-1",
+              "type": "consultation",
+              "status": "open",
+              "elementId": "idea",
+              "message": "Promote this circle?",
+              "operation": {
+                "type": "promote",
+                "id": "idea",
+                "to": "card"
+              },
+              "author": "ai"
+            }
+          ]
+        }
+      ],
+      "future": []
+    }
+  }
+}
