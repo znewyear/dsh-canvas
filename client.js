@@ -679,6 +679,15 @@ window.__ModuleLoader__.load({
       const applySel=patch=>{if(!selection.length||!doc)return;const ids=[...descendants(selection)].filter(id=>{const e=doc.elements.find(x=>x.id===id);return e&&e.kind!=='group';});if(!ids.length)return;commit(ids.map(id=>({type:'update',id,patch})));};
       const styleLater=patch=>{if(!selection.length)return;if(styleTimer.current)clearTimeout(styleTimer.current);styleTimer.current=setTimeout(()=>{styleTimer.current=0;applySel(patch);},150);};
       const selStyled=(doc?.elements||[]).filter(e=>selection.includes(e.id)&&['rect','ellipse','semi','arrow','note','text'].includes(e.kind));
+      // Editing a selected shape must not rewrite the defaults used by the next shape: each keeps its own style.
+      const editSel=tool!=='pen'&&tool!=='erase'&&selStyled.length>0,styleEl=editSel?selStyled[0]:null;
+      const dColor=styleEl&&typeof styleEl.stroke==='string'?styleEl.stroke:color;
+      const dWidth=styleEl&&Number.isFinite(Number(styleEl.strokeWidth))?Number(styleEl.strokeWidth):width;
+      const dFillOn=styleEl?!!(styleEl.fill&&styleEl.fill!=='none'):fillOn;
+      const dFill=styleEl&&dFillOn?styleEl.fill:fillColor;
+      const dNoteFill=styleEl&&styleEl.kind==='note'&&dFillOn?styleEl.fill:noteFill;
+      const dFontSize=styleEl&&styleEl.fontSize?styleEl.fontSize:fontSize;
+      const dTextColor=styleEl&&styleEl.textColor?styleEl.textColor:textColor;
       const canGroup=!!doc&&roots(selection).length>=2,canUngroup=!!doc&&selected.some(e=>e.kind==='group');
       const selHasShape=selStyled.some(e=>['rect','ellipse','semi'].includes(e.kind)),selLine=selStyled.some(e=>e.kind==='arrow'),selNote=selStyled.some(e=>e.kind==='note'),selText=selStyled.some(e=>e.kind==='text');
       const strokeBar=['rect','ellipse','semi','arrow','note'].includes(tool)||(tool==='select'&&(selHasShape||selLine||selNote));
@@ -705,7 +714,7 @@ window.__ModuleLoader__.load({
             onKeyDown:e=>{if(e.key==='Escape'){e.stopPropagation();live.current.editor=null;setEditor(null);}if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();saveEditor();}}}),h('div',{className:'ic-consult',style:{top:editor.rect[1]*eview.z+eview.y+Math.max(85,editor.rect[3]*eview.z)+10,left:editor.rect[0]*eview.z+eview.x,right:'auto',bottom:'auto',width:'auto',maxWidth:'calc(100% - 20px)',padding:'8px 10px'}},h('div',{className:'ic-actions'},h('input',{type:'color',className:'ic-color',value:editor.textColor||'#26382d',onChange:e=>{const next={...live.current.editor,textColor:e.target.value};live.current.editor=next;setEditor(next);},'aria-label':t('Text color'),title:t('Text color')}),h('select',{'aria-label':t('Font size'),title:t('Font size'),value:Number(editor.fontSize)||16,onChange:e=>{const next={...live.current.editor,fontSize:+e.target.value};live.current.editor=next;setEditor(next);}},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),button('Save',saveEditor),button('Cancel',()=>{live.current.editor=null;setEditor(null);})))),
           consult&&h('aside',{className:'ic-consult','aria-label':t('What does this circle mean?')},h('h3',null,t('What does this circle mean?')),h('p',null,t('Keep it as a drawing, make a card, or group the enclosed items. Nothing converts without your choice.')),h('div',{className:'ic-actions'},consult.id&&button('Make card',()=>consultChoice('card'),{disabled:busy}),button('Group enclosed',()=>consultChoice('group'),{disabled:busy||consult.ids.length<2}),button('Keep drawing',()=>consultChoice('ignore'))))),
         h('div',{className:'ic-top'},
-          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.1.6'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
+          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.1.7'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
           h('div',{className:'ic-float ic-tr'},button('Undo',()=>action('undo'),{disabled:busy||!doc?.history?.length}),button('Redo',()=>action('redo'),{disabled:busy||!doc?.future?.length}),button(confirmClear?'Confirm clear':'Clear canvas',clearBoard,{disabled:!doc?.elements?.length||busy,'aria-pressed':confirmClear}),button('Grid',()=>{const next=!grid;live.current.grid=next;setGrid(next);paintRef.current&&paintRef.current();},{'aria-pressed':grid}),button('Numbers',()=>{const next=!badges;live.current.badges=next;setBadges(next);paintRef.current&&paintRef.current();},{'aria-pressed':badges}),button('Fit',fit,{disabled:!doc}))),
         h('div',{className:'ic-float ic-tc ic-rail',role:'toolbar','aria-label':t('Canvas'),onMouseLeave:()=>{setTip(null);setMoreOpen(false);}},
           ...primaryTools.map(k=>toolButton(k)),
@@ -753,33 +762,33 @@ window.__ModuleLoader__.load({
             h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='esize'?null:'esize'),title:t('Eraser radius'),'aria-label':t('Eraser radius'),'aria-expanded':penPanel==='esize'},h('span',{className:'ic-dotmark',style:{width:Math.min(18,Math.max(5,radius*.45)),height:Math.min(18,Math.max(5,radius*.45))}})),
             h('span',{className:'ic-bubble',role:'tooltip'},t('Eraser radius'))),
           textBar&&h('span',{className:'ic-chip'},t('Font size')),
-          textBar&&h('select',{className:'ic-doc',value:fontSize,onChange:e=>{const n=+e.target.value;setFontSize(n);applySel({fontSize:n});},'aria-label':t('Font size'),title:t('Font size')},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),
+          textBar&&h('select',{className:'ic-doc',value:dFontSize,onChange:e=>{const n=+e.target.value;if(editSel)applySel({fontSize:n});else setFontSize(n);},'aria-label':t('Font size'),title:t('Font size')},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),
           textBar&&h('span',{className:'ic-tipwrap'},
-            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='tcolor'?null:'tcolor'),title:t('Text color'),'aria-label':t('Text color'),'aria-expanded':penPanel==='tcolor'},h('span',{className:'ic-swatch ic-swatch-mini',style:{background:textColor}})),
+            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='tcolor'?null:'tcolor'),title:t('Text color'),'aria-label':t('Text color'),'aria-expanded':penPanel==='tcolor'},h('span',{className:'ic-swatch ic-swatch-mini',style:{background:dTextColor}})),
             h('span',{className:'ic-bubble',role:'tooltip'},t('Text color'))),
           (strokeBar&&!noteBar)&&h('span',{className:'ic-tipwrap'},
-            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='color'?null:'color'),title:t('Border color'),'aria-label':t('Border color'),'aria-expanded':penPanel==='color'},h('span',{className:'ic-swatch ic-swatch-mini',style:{background:color}})),
+            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='color'?null:'color'),title:t('Border color'),'aria-label':t('Border color'),'aria-expanded':penPanel==='color'},h('span',{className:'ic-swatch ic-swatch-mini',style:{background:dColor}})),
             h('span',{className:'ic-bubble',role:'tooltip'},t('Border color'))),
           (strokeBar&&!noteBar)&&h('span',{className:'ic-tipwrap'},
-            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='size'?null:'size'),title:t('Border width'),'aria-label':t('Border width'),'aria-expanded':penPanel==='size'},h('span',{className:'ic-dotmark',style:{width:Math.min(16,Math.max(5,width*1.1)),height:Math.min(16,Math.max(5,width*1.1))}})),
+            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='size'?null:'size'),title:t('Border width'),'aria-label':t('Border width'),'aria-expanded':penPanel==='size'},h('span',{className:'ic-dotmark',style:{width:Math.min(16,Math.max(5,dWidth*1.1)),height:Math.min(16,Math.max(5,dWidth*1.1))}})),
             h('span',{className:'ic-bubble',role:'tooltip'},t('Border width'))),
-          fillBar&&button('Fill',()=>{const next=!fillOn;setFillOn(next);applySel({fill:next?fillColor:'none'});},{'aria-pressed':fillOn}),
+          fillBar&&button('Fill',()=>{const next=!dFillOn;if(editSel)applySel({fill:next?dFill:'none'});else setFillOn(next);},{'aria-pressed':dFillOn}),
           (fillBar||noteBar)&&h('span',{className:'ic-tipwrap'},
-            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='fill'?null:'fill'),title:t('Fill color'),'aria-label':t('Fill color'),'aria-expanded':penPanel==='fill'},h('span',{className:'ic-swatch ic-swatch-mini',style:{background:fillBar?fillColor:noteFill}})),
+            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='fill'?null:'fill'),title:t('Fill color'),'aria-label':t('Fill color'),'aria-expanded':penPanel==='fill'},h('span',{className:'ic-swatch ic-swatch-mini',style:{background:noteBar?dNoteFill:(dFillOn?dFill:fillColor)}})),
             h('span',{className:'ic-bubble',role:'tooltip'},t('Fill color'))),
           penPanel==='size'&&tool==='pen'&&h('div',{className:'ic-pen-card ic-pen-size',role:'group','aria-label':t('Pen size')},
             h('div',{className:'ic-pen-head'},h('strong',null,t('Pen size')),h('span',null,String(width))),
             h('input',{type:'range',className:'ic-pen-range',min:1,max:24,step:.5,value:width,onChange:e=>setWidth(+e.target.value),'aria-label':t('Pen size'),title:t('Pen size')})),
           penPanel==='size'&&tool!=='pen'&&strokeBar&&h('div',{className:'ic-pen-card ic-pen-size',role:'group','aria-label':t('Border width')},
-            h('div',{className:'ic-pen-head'},h('strong',null,t('Border width')),h('span',null,String(width))),
-            h('input',{type:'range',className:'ic-pen-range',min:1,max:24,step:.5,value:width,onChange:e=>{const n=+e.target.value;setWidth(n);styleLater({strokeWidth:n});},'aria-label':t('Border width'),title:t('Border width')})),
+            h('div',{className:'ic-pen-head'},h('strong',null,t('Border width')),h('span',null,String(dWidth))),
+            h('input',{type:'range',className:'ic-pen-range',min:1,max:24,step:.5,value:dWidth,onChange:e=>{const n=+e.target.value;if(editSel)styleLater({strokeWidth:n});else setWidth(n);},'aria-label':t('Border width'),title:t('Border width')})),
           penPanel==='esize'&&h('div',{className:'ic-pen-card ic-pen-size',role:'group','aria-label':t('Eraser radius')},
             h('div',{className:'ic-pen-head'},h('strong',null,t('Eraser radius')),h('span',null,String(radius))),
             h('input',{type:'range',className:'ic-pen-range',min:4,max:60,step:1,value:radius,onChange:e=>setRadius(+e.target.value),'aria-label':t('Eraser radius'),title:t('Eraser radius')})),
-          penPanel==='color'&&colorCard(setColor,color,c=>{if(tool!=='pen')applySel({stroke:c});}),
-          penPanel==='fill'&&fillBar&&colorCard(setFillColor,fillColor,c=>{applySel({fill:c});setFillOn(true);}),
-          penPanel==='fill'&&!fillBar&&noteBar&&colorCard(setNoteFill,noteFill,c=>{setFillColor(c);applySel({fill:c});}),
-          penPanel==='tcolor'&&colorCard(setTextColor,textColor,c=>applySel({textColor:c}))),
+          penPanel==='color'&&colorCard(c=>{if(editSel)applySel({stroke:c});else setColor(c);},dColor),
+          penPanel==='fill'&&fillBar&&colorCard(c=>{if(editSel)applySel({fill:c});else setFillColor(c);},dFill),
+          penPanel==='fill'&&!fillBar&&noteBar&&colorCard(c=>{if(editSel)applySel({fill:c});else{setNoteFill(c);setFillColor(c);}},dNoteFill),
+          penPanel==='tcolor'&&colorCard(c=>{if(editSel)applySel({textColor:c});else setTextColor(c);},dTextColor)),
         h('div',{className:'ic-notices'},
           error&&h('div',{className:'ic-notice ic-error',role:'alert'},h('span',null,error),button('Refresh',()=>refresh(true)),button('Dismiss',()=>setError(''))),
           doc?.pending?.filter(p=>!p.resolved&&p.status!=='resolved'&&p.status!=='rejected'&&p.status!=='approved').map(p=>h('div',{className:'ic-notice',key:p.id},h('span',null,t('Pending decisions'),': ',p.message||p.kind),button('Approve',()=>commit([{type:'resolvePending',id:p.id,approved:true}]),{disabled:busy}),button('Reject',()=>commit([{type:'resolvePending',id:p.id,approved:false}]),{disabled:busy}))),

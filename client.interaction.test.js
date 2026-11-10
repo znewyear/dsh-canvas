@@ -290,6 +290,35 @@ test('shift constrains new shapes, moves and corner resizes',async()=>{
   assert.ok(Math.abs(resized.rect[2]/resized.rect[3]-ratio)<.01,'shift-resize keeps the original aspect ratio');
 });
 
+test('editing one shape does not leak its style into the next shape',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('r'));
+  tree=panel.render();
+  await gesture(panel,[[100,100],[220,180]]);
+  const first=panel.calls.at(-1)[1].ops[0].element;
+  tree=panel.render();
+  const swatchOf=tree=>nodes(button(tree,'Border color')).find(n=>n.props?.className==='ic-swatch ic-swatch-mini')?.props?.style?.background;
+  assert.equal(swatchOf(tree),'#356c59','the selected shape shows its own border colour');
+  button(tree,'Border color').props.onClick();
+  tree=panel.render();
+  nodes(tree).find(n=>n.type==='button'&&n.props?.['aria-label']==='#e03131').props.onClick();
+  await tick();
+  const update=panel.calls.at(-1)[1].ops[0];
+  assert.equal(update.type,'update');
+  assert.equal(update.patch.stroke,'#e03131');
+  assert.equal(update.id,first.id);
+  tree=panel.render();
+  assert.equal(swatchOf(tree),'#e03131','the edited shape reflects its new colour');
+  await gesture(panel,[[300,100],[420,180]]);
+  const second=panel.calls.at(-1)[1].ops[0];
+  assert.equal(second.type,'create');
+  assert.equal(second.element.stroke,'#356c59','the next shape keeps the tool default');
+  tree=panel.render();
+  assert.equal(swatchOf(tree),'#356c59','the new shape shows its own default colour');
+});
+
 test('the fill toggle fills new shapes',async()=>{
   const panel=harness();
   await tick();
