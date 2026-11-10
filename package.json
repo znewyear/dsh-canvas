@@ -1,6 +1,6 @@
 {
   "name": "@local/intent-canvas",
-  "version": "1.0.100",
+  "version": "1.0.101",
   "private": true,
   "type": "module",
   "description": "Collaborative human+AI canvas plugin for DeepSeek Harness (shared document, durable ops, local stroke erasure, pen styles, export)",

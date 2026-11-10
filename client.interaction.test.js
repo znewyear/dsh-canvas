@@ -248,6 +248,48 @@ test('dragging the rotation handle stores an angle',async()=>{
   assert.ok(Math.abs(op.patch.rotation-90)<1,'rotation reaches 90 degrees');
 });
 
+test('shift constrains new shapes, moves and corner resizes',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  const surface=()=>nodes(panel.render()).find(n=>n.props?.role==='img').props;
+  const ev=(x,y,shiftKey=false)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey,
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
+    currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+
+  tree.props.onKeyDown(key('r'));
+  let el=surface();
+  el.onPointerDown(ev(100,100));
+  el.onPointerMove(ev(300,200,true));
+  await el.onPointerUp(ev(300,200,true));
+  await tick();
+  const created=panel.calls.at(-1)[1].ops[0].element;
+  assert.equal(created.rect[2],created.rect[3],'shift-drag makes a square');
+
+  tree=panel.render();
+  tree.props.onKeyDown(key('v'));
+  el=surface();
+  el.onPointerDown(ev(200,150));
+  el.onPointerMove(ev(260,300,true));
+  await el.onPointerUp(ev(260,300,true));
+  await tick();
+  const moved=panel.calls.at(-1)[1].ops[0];
+  assert.equal(moved.type,'move');
+  assert.equal(moved.dx,0,'shift-move locks to the dominant axis');
+  assert.ok(moved.dy>0);
+
+  panel.render();
+  const e=panel.doc.elements[0],ratio=e.rect[2]/e.rect[3],se=[e.rect[0]+e.rect[2]+90,e.rect[1]+e.rect[3]+70];
+  el=surface();
+  el.onPointerDown(ev(...se));
+  el.onPointerMove(ev(se[0]+100,se[1]+200,true));
+  await el.onPointerUp(ev(se[0]+100,se[1]+200,true));
+  await tick();
+  const resized=panel.calls.at(-1)[1].ops[0];
+  assert.equal(resized.type,'resize');
+  assert.ok(Math.abs(resized.rect[2]/resized.rect[3]-ratio)<.01,'shift-resize keeps the original aspect ratio');
+});
+
 test('the fill toggle fills new shapes',async()=>{
   const panel=harness();
   await tick();

@@ -305,7 +305,18 @@ window.__ModuleLoader__.load({
           if(pts.length===g.points.length)return;
           next={...g,points:pts,...(press?{pressures:press}:{})};
         }
-        else next={...g,end:p};live.current.gesture=next;queuePaint('overlay');};
+        else {
+          let q=p;
+          // Shift constrains shapes to a square, moves to one axis, and corner resizes to the original aspect ratio.
+          if(e.shiftKey&&(g.kind==='rect'||g.kind==='ellipse'||g.kind==='semi')){const dx=p[0]-g.start[0],dy=p[1]-g.start[1],m=Math.max(Math.abs(dx),Math.abs(dy));q=[g.start[0]+(dx<0?-m:m),g.start[1]+(dy<0?-m:m)];}
+          else if(e.shiftKey&&g.kind==='move'){const dx=p[0]-g.start[0],dy=p[1]-g.start[1];q=Math.abs(dx)>=Math.abs(dy)?[p[0],g.start[1]]:[g.start[0],p[1]];}
+          else if(e.shiftKey&&g.kind==='resize'&&g.handle.length===2){const r=g.rect,left=g.handle.includes('w'),top=g.handle.includes('n'),ax=left?r[0]+r[2]:r[0],ay=top?r[1]+r[3]:r[1],ratio=(r[2]||1)/(r[3]||1);
+            let w=Math.abs(p[0]-ax),h=Math.abs(p[1]-ay);if(w/(h||1)>ratio)h=w/ratio;else w=h*ratio;q=[left?ax-w:ax+w,top?ay-h:ay+h];}
+          next={...g,end:q};
+        }
+        live.current.gesture=next;
+        // Move/resize preview committed elements inside the scene; shape and marquee previews only touch the overlay.
+        if(g.kind==='move'||g.kind==='resize')queuePaint();else queuePaint('overlay');};
       // Whole-stroke eraser: any element the eraser trail touches is removed in one operation.
       const eraserHits=pts=>{const pad=radius/(live.current.view?.z||1),ids=new Set();
         for(const e of doc.elements){if(e.kind==='group')continue;const r=e.rect;let near=false;
@@ -355,7 +366,9 @@ window.__ModuleLoader__.load({
       // Selection chrome and hit-testing share one geometry, so a handle is drawn exactly where it can be grabbed.
       const selectionChrome=st=>{const chosen=(st.doc?.elements||[]).filter(e=>(st.selection||[]).includes(e.id));if(!chosen.length)return null;
         const box=bounds(chosen.map(e=>({...e,rect:rectWith(e,st.gesture)})));
-        const angle=chosen.length===1?(Number(chosen[0].rotation)||0)*Math.PI/180:0;
+        // A live rotate gesture must rotate the frame with the element, not leave it at the previous angle.
+        const liveTurn=st.gesture?.kind==='rotate'&&chosen.some(e=>st.gesture.ids?.includes(e.id))?(st.gesture.angle||0):0;
+        const angle=chosen.length===1?((Number(chosen[0].rotation)||0)+liveTurn)*Math.PI/180:0;
         const cx=box[0]+box[2]/2,cy=box[1]+box[3]/2,v=st.view,z=v.z||1;
         const toScreen=p=>[p[0]*z+v.x,p[1]*z+v.y];
         const corners=[[box[0],box[1]],[box[0]+box[2],box[1]],[box[0]+box[2],box[1]+box[3]],[box[0],box[1]+box[3]]];
@@ -639,7 +652,7 @@ window.__ModuleLoader__.load({
             onKeyDown:e=>{if(e.key==='Escape'){e.stopPropagation();live.current.editor=null;setEditor(null);}if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();saveEditor();}}}),h('div',{className:'ic-consult',style:{top:editor.rect[1]*eview.z+eview.y+Math.max(85,editor.rect[3]*eview.z)+10,left:editor.rect[0]*eview.z+eview.x,right:'auto',bottom:'auto',width:'auto',maxWidth:'calc(100% - 20px)',padding:'8px 10px'}},h('div',{className:'ic-actions'},h('input',{type:'color',className:'ic-color',value:editor.textColor||'#26382d',onChange:e=>{const next={...live.current.editor,textColor:e.target.value};live.current.editor=next;setEditor(next);},'aria-label':t('Text color'),title:t('Text color')}),h('select',{'aria-label':t('Font size'),title:t('Font size'),value:Number(editor.fontSize)||16,onChange:e=>{const next={...live.current.editor,fontSize:+e.target.value};live.current.editor=next;setEditor(next);}},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),button('Save',saveEditor),button('Cancel',()=>{live.current.editor=null;setEditor(null);})))),
           consult&&h('aside',{className:'ic-consult','aria-label':t('What does this circle mean?')},h('h3',null,t('What does this circle mean?')),h('p',null,t('Keep it as a drawing, make a card, or group the enclosed items. Nothing converts without your choice.')),h('div',{className:'ic-actions'},consult.id&&button('Make card',()=>consultChoice('card'),{disabled:busy}),button('Group enclosed',()=>consultChoice('group'),{disabled:busy||consult.ids.length<2}),button('Keep drawing',()=>consultChoice('ignore'))))),
         h('div',{className:'ic-top'},
-          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.0.100'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
+          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.0.101'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
           h('div',{className:'ic-float ic-tr'},button('Undo',()=>action('undo'),{disabled:busy||!doc?.history?.length}),button('Redo',()=>action('redo'),{disabled:busy||!doc?.future?.length}),button(confirmClear?'Confirm clear':'Clear canvas',clearBoard,{disabled:!doc?.elements?.length||busy,'aria-pressed':confirmClear}),button('Grid',()=>{const next=!grid;live.current.grid=next;setGrid(next);paintRef.current&&paintRef.current();},{'aria-pressed':grid}),button('Numbers',()=>{const next=!badges;live.current.badges=next;setBadges(next);paintRef.current&&paintRef.current();},{'aria-pressed':badges}),button('Fit',fit,{disabled:!doc}))),
         h('div',{className:'ic-float ic-tc ic-rail',role:'toolbar','aria-label':t('Canvas'),onMouseLeave:()=>{setTip(null);setMoreOpen(false);}},
           ...primaryTools.map(k=>toolButton(k)),
