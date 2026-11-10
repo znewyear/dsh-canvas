@@ -409,6 +409,20 @@ test('an idle host re-render does not repaint an unchanged canvas',async()=>{
   assert.equal(calls.clearRect||0,first);
 });
 
+test('the canvas is split into a scene bitmap and an event overlay',async()=>{
+  const panel=harness();
+  await tick();
+  const tree=panel.render();
+  const scene=nodes(tree).find(n=>n.props?.className==='ic-canvas ic-scene');
+  const overlay=nodes(tree).find(n=>n.props?.className==='ic-canvas ic-overlay');
+  assert.ok(scene,'scene layer exists');
+  assert.ok(overlay,'overlay layer exists');
+  assert.equal(scene.props['aria-hidden'],'true');
+  assert.equal(scene.props.onPointerDown,undefined,'the scene layer never receives pointers');
+  assert.equal(overlay.props.role,'img');
+  assert.equal(typeof overlay.props.onPointerDown,'function');
+});
+
 test('rotate mode turns any drag into a rotation and repeats',async()=>{
   const panel=harness();
   await tick();
