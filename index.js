@@ -9,6 +9,8 @@ const output = {schema:{type:'string'},render:(_args,value)=>[{type:'text',text:
 // Each session owns a canvas document named after it, so a new session in a project starts on its own empty canvas.
 const sessionDoc = exec => { const id = exec?.agent?.id; return id ? 's-' + String(id).replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 72) : 'canvas'; };
 const docOf = (args, exec) => args.doc || sessionDoc(exec);
+// Image elements carry inline base64 data URLs; tool output omits the bytes so a pasted screenshot cannot flood the model context.
+const stripImageData = (key, value) => key === 'src' && typeof value === 'string' && value.startsWith('data:image/') ? '[image data omitted]' : value;
 
 export async function apply(ctx) {
   const domain = await ctx.storageDomain.open(spec);
@@ -50,17 +52,17 @@ export async function apply(ctx) {
   });
   ctx.tools.register(defineTool({
     name:'canvas_read',
-    description:'Read a shared canvas document, including elements, comments, pending human consultations and current version. Read before editing; the human sees the same state.',
-    parameters:{doc:{type:'string',description:"Document id; omitted = this session's canvas."},sinceSeq:{type:'integer',description:'Known version; adds unchanged:true when still current.'}},
+    description:'Read a shared canvas document, including elements, comments, pending human consultations and current version. Read before editing; the human sees the same state. Image elements are returned with src replaced by "[image data omitted]".',
+    parameters:{doc:{type:'string',description:"Document id; omitted = this session's canvas."},sinceSeq:{type:'integer',description:'Known version; when still current, returns unchanged:true and omits the document.'}},
     output,
-    async execute(args, exec) {return JSON.stringify(await safe(() => store.read({...args, doc:docOf(args, exec)})));}
+    async execute(args, exec) {return JSON.stringify(await safe(() => store.read({...args, doc:docOf(args, exec)})), stripImageData);}
   }));
   ctx.tools.register(defineTool({
     name:'canvas_apply',
-    description:'Atomically edit the human–AI shared canvas. On VERSION_CONFLICT read and reconcile, never blindly retry. One batch is one shared undo step. Circle promotion creates a consultation only a human can approve. Coordinates: rects world-space, path points rect-local, eraser points world-space. Operations: create {element:{id,kind,rect:[x,y,w,h],...}}, update {id,patch}, delete {ids}, clear, move {ids,dx,dy}, resize {id,rect}, erasePath {ids?,points:[[x,y]],radius}, group {id,ids}, ungroup {id}, reorder {ids,position}, setText {id,text}, setRole {id,role}, setVariant {id,variant}, duplicate {ids}, paste {elements}, align {ids,alignment:left|right|center|top|bottom|middle}, distribute {ids,axis:x|y}, promote {id,to:button|card|group}, annotate {elementId?,text}, resolveAnnotation {id}, raisePending {message,operation?}, resolvePending {id,approved:false}. Every operation includes type. Freehand: create {element:{id,kind:path,rect,points,stroke,strokeWidth}}. undo/redo/revertTo {version} must be singleton batches. Returns the new snapshot and diff; no changes on validation failure.',
+    description:'Atomically edit the human–AI shared canvas. On VERSION_CONFLICT read and reconcile, never blindly retry. One batch is one shared undo step. Circle promotion creates a consultation only a human can approve. Coordinates: rects world-space, path points rect-local, eraser points world-space. Operations: create {element:{id,kind,rect:[x,y,w,h],...}}, update {id,patch}, delete {ids}, clear, move {ids,dx,dy}, resize {id,rect}, erasePath {ids?,points:[[worldX,worldY],...],radius}, group {id,ids}, ungroup {id}, reorder {ids,position}, setText {id,text}, setRole {id,role}, setVariant {id,variant}, duplicate {ids}, paste {elements}, align {ids,alignment:left|right|center|top|bottom|middle}, distribute {ids,axis:x|y}, promote {id,to:button|card|group}, annotate {elementId?,text}, resolveAnnotation {id}, raisePending {message,operation?}, resolvePending {id,approved:false}. Every operation includes type. Freehand: create {element:{id,kind:path,rect,points,stroke,strokeWidth}}. Images: create {element:{id,kind:image,rect,src:"data:image/..."}} (data URL only, ≤900 KB); image bytes are omitted from tool output. undo/redo/revertTo {version} must be singleton batches. Returns the new snapshot and diff; no changes on validation failure.',
     parameters:{doc:{type:'string',description:"Document id; omitted = this session's canvas."},baseVersion:{type:'integer',required:true,description:'Version obtained from canvas_read.'},ops:{type:'array',items:{type:'json'},required:true,description:'Operation objects; max 1000, finite coordinates, unique ids.'}},
     output,
-    async execute(args,exec) {if(exec.signal.aborted) return JSON.stringify(failure({code:'ABORTED',message:'Request cancelled'}));const doc=docOf(args,exec);const out=await safe(() => store.apply({...args, doc},'ai'));if(out.ok&&out.document)mark(doc,'ai',out.document.version);return JSON.stringify(out);}
+    async execute(args,exec) {if(exec.signal.aborted) return JSON.stringify(failure({code:'ABORTED',message:'Request cancelled'}));const doc=docOf(args,exec);const out=await safe(() => store.apply({...args, doc},'ai'));if(out.ok&&out.document)mark(doc,'ai',out.document.version);return JSON.stringify(out, stripImageData);}
   }));
   } catch (error) {
     await domain.close();

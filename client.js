@@ -5,6 +5,55 @@ window.__ModuleLoader__.load({
 
     const { useState, useEffect, useRef } = React;
     const uid = () => 'e-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 9);
+    // Pasted bitmaps live inline as data URLs, so one image is bounded and large screenshots are re-encoded before they enter the document.
+    const IMAGE_MAX_CHARS = 600000, IMAGE_MAX_PX = 1400, IMAGE_WORLD_MAX = 460;
+    const imageCache = new Map(), repainters = new Set();
+    const imageEntry = src => {
+      let entry = imageCache.get(src);
+      if (!entry) {
+        if (imageCache.size > 40) imageCache.delete(imageCache.keys().next().value);
+        entry = { img: null, failed: false };
+        const img = new Image();
+        entry.promise = new Promise(resolve => {
+          img.onload = () => { entry.img = img; resolve(img); for (const fn of repainters) fn(); };
+          img.onerror = () => { entry.failed = true; resolve(null); for (const fn of repainters) fn(); };
+        });
+        img.src = src; imageCache.set(src, entry);
+      }
+      return entry;
+    };
+    const reencodeImage = async (img, width, height) => {
+      let scale = Math.min(1, IMAGE_MAX_PX / Math.max(width, height, 1)), quality = .9;
+      for (let i = 0; i < 7; i++) {
+        const w = Math.max(1, Math.round(width * scale)), h = Math.max(1, Math.round(height * scale));
+        const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        const cx = cv.getContext('2d'); if (!cx) return null; cx.drawImage(img, 0, 0, w, h);
+        let out = cv.toDataURL('image/webp', quality);
+        if (!out.startsWith('data:image/webp')) out = cv.toDataURL('image/png');
+        if (out.length <= IMAGE_MAX_CHARS) return out;
+        if (i % 2) quality = Math.max(.55, quality - .12); else scale *= .78;
+      }
+      return null;
+    };
+    const prepareImage = async dataUrl => {
+      const img = await imageEntry(dataUrl).promise;
+      if (!img) throw new Error('IMAGE_DECODE');
+      const width = img.naturalWidth || img.width, height = img.naturalHeight || img.height;
+      let src = dataUrl;
+      if (src.length > IMAGE_MAX_CHARS || Math.max(width, height) > IMAGE_MAX_PX * 1.5) {
+        src = (await reencodeImage(img, width, height)) || '';
+        if (!src) throw new Error('IMAGE_TOO_LARGE');
+      }
+      const final = await imageEntry(src).promise;
+      if (!final) throw new Error('IMAGE_DECODE');
+      return { src, w: final.naturalWidth || final.width, h: final.naturalHeight || final.height };
+    };
+    const readAsDataUrl = blob => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error('IMAGE_READ'));
+      reader.readAsDataURL(blob);
+    });
     const bounds = es => { if (!es.length) return null; const x = Math.min(...es.map(e => e.rect[0])), y = Math.min(...es.map(e => e.rect[1])); return [x,y,Math.max(...es.map(e=>e.rect[0]+e.rect[2]))-x,Math.max(...es.map(e=>e.rect[1]+e.rect[3]))-y]; };
     const normalize = (a,b) => [Math.min(a[0],b[0]),Math.min(a[1],b[1]),Math.abs(a[0]-b[0]),Math.abs(a[1]-b[1])];
     // One bounds update for the eight directional handles; a crossed edge clamps instead of flipping.
@@ -29,7 +78,12 @@ window.__ModuleLoader__.load({
       "Clipboard unavailable":"浏览器不允许访问剪贴板",
       "Clipboard read unavailable":"浏览器不允许读取剪贴板",
       "Copied — paste it in any board":"已复制，可在其他画板粘贴",
-      "Images cannot be pasted yet":"暂不支持把图片粘贴进画布",
+      "Pasted image into the canvas":"已粘贴图片到画布",
+      "Opened the document":"已打开文档",
+      "Reloaded the canvas":"已重新读取画布",
+      "Image could not be pasted":"图片粘贴失败",
+      "Image is too large":"图片太大，压缩后仍超过画布上限",
+      "Image unavailable":"图片不可用",
       "Clipboard has no canvas content":"剪贴板里没有画布内容",
       "Pasted into the canvas":"已粘贴到画布",
       "Session service unavailable":"会话服务不可用",
@@ -42,14 +96,18 @@ window.__ModuleLoader__.load({
       "PNG encode failed":"PNG 编码失败",
       'I drew or edited the canvas.':'我在画布上画了/改了内容。',
       'elements':'个图元','Please read this canvas and continue.':'请读一下这份画布并接着处理。',
-      'Canvas':'协作画布','Shared space, explicit intent':'共同创作，明确意图','Document':'文档','Open':'打开','Select':'选择','Pan':'移动','Pen':'画笔','Erase':'橡皮','Eraser':'橡皮','Text':'文字','Rectangle':'矩形','Ellipse':'椭圆','Arrow':'箭头','Note':'便签','Lasso':'圈选','Undo':'撤销','Redo':'重做','Delete':'删除','Duplicate':'复制副本','Group':'编组','Ungroup':'取消编组','Fit':'适应画布','Grid':'网格','Color':'颜色','Stroke width':'线宽','Eraser radius':'橡皮半径','Align':'对齐','Left':'左对齐','Center':'水平居中','Right':'右对齐','Top':'顶对齐','Middle':'垂直居中','Bottom':'底对齐','Distribute horizontally':'水平分布','Distribute vertically':'垂直分布','Front':'置顶','Back':'置底','Ready':'已同步','Saving…':'保存中…','Loading…':'加载中…','Draw a thought.':'把想法画出来。','Use the pen, add a note, or select a shape. AI and human edits share this document.':'画一笔、贴张便签，或选择形状。人与 AI 共同编辑此文档。','Space + drag to pan · Wheel to zoom · Double-click to edit text':'空格拖动画布 · 滚轮缩放 · 双击编辑文字','Selected':'已选择','Refresh':'重新读取','Dismiss':'关闭','What does this circle mean?':'这个圈表达什么意图？','Keep it as a drawing, make a card, or group the enclosed items. Nothing converts without your choice.':'保留笔迹、转成卡片，或编组圈内元素。只有你选择后才会转换。','Make card':'转成卡片','Group enclosed':'编组圈内','Keep drawing':'保留笔迹','New text':'新文字','New note':'新便签','Pending decisions':'待确认意图','Approve':'同意','Reject':'拒绝','Copy':'复制','Paste':'粘贴','Cancel':'取消','Save':'保存','Text content':'文字内容','Conflict: another edit arrived. Refresh, then retry your action. Your gesture was not applied.':'版本冲突：其他编辑已到达。请重新读取后重试，本次操作未写入。','Open canvas':'打开画布','Draw together. The agent uses the same document and operation history.':'与 AI 共用文档和操作历史。','Nothing selected':'未选择元素','Comments':'批注','Resolve':'解决','Add comment':'添加批注','Comment text':'批注内容','Send':'发送','Selection':'选择范围','Version':'版本','Zoom in':'放大','Zoom out':'缩小','Send to AI':'发给 AI','AI is editing':'AI 正在编辑','Clear canvas':'清空画板','Confirm clear':'再点一次清空','Semicircle':'半圆','More':'更多','Export PNG':'导出图片','Fragment erase':'按涂擦除','Whole erase':'整块清除','Size':'大小','Width':'粗细','Copy all':'复制全部','Close':'关闭','Fill':'填充','Fill color':'填充色','Export PNG (white)':'导出图片（白底）','Export PNG (transparent)':'导出图片（透明背景）','Rotate left':'左转 90°','Rotate right':'右转 90°','Rotate':'旋转','Numbers':'编号','More actions':'更多操作','Comment':'批注','Comment hint':'给选中图元写一条批注（AI 读画布时能看到，不会发到对话）','Font size':'字号','Text color':'文字颜色','Plain':'普通','Marker':'马克笔','Pencil':'铅笔','Watercolor':'水彩笔','Fountain pen':'钢笔','Pen type':'画笔','Pen size':'画笔大小','Pen color':'画笔颜色','Border color':'边框颜色','Border width':'边框粗细','Custom color':'自定义颜色','Fill input':'填入输入框','Fill short':'填入','Fill hint':'把画布内容填进对话输入框，不发送，你可以改完再发','Send hint':'直接发送到当前会话，我会读取画布并继续处理'
+      'Canvas':'协作画布','Shared space, explicit intent':'共同创作，明确意图','Document':'文档','Open':'打开','Reload':'重新读取','Select':'选择','Pan':'移动','Pen':'画笔','Erase':'橡皮','Eraser':'橡皮','Text':'文字','Rectangle':'矩形','Ellipse':'椭圆','Arrow':'箭头','Note':'便签','Lasso':'圈选','Undo':'撤销','Redo':'重做','Delete':'删除','Duplicate':'复制副本','Group':'编组','Ungroup':'取消编组','Fit':'适应画布','Grid':'网格','Color':'颜色','Stroke width':'线宽','Eraser radius':'橡皮半径','Align':'对齐','Left':'左对齐','Center':'水平居中','Right':'右对齐','Top':'顶对齐','Middle':'垂直居中','Bottom':'底对齐','Distribute horizontally':'水平分布','Distribute vertically':'垂直分布','Front':'置顶','Back':'置底','Ready':'已同步','Saving…':'保存中…','Loading…':'加载中…','Draw a thought.':'把想法画出来。','Use the pen, add a note, or select a shape. AI and human edits share this document.':'画一笔、贴张便签，或选择形状。人与 AI 共同编辑此文档。','Space + drag to pan · Wheel to zoom · Double-click to edit text':'空格拖动画布 · 滚轮缩放 · 双击编辑文字','Selected':'已选择','Refresh':'重新读取','Dismiss':'关闭','What does this circle mean?':'这个圈表达什么意图？','Keep it as a drawing, make a card, or group the enclosed items. Nothing converts without your choice.':'保留笔迹、转成卡片，或编组圈内元素。只有你选择后才会转换。','Make card':'转成卡片','Group enclosed':'编组圈内','Keep drawing':'保留笔迹','New text':'新文字','New note':'新便签','Pending decisions':'待确认意图','Approve':'同意','Reject':'拒绝','Copy':'复制','Paste':'粘贴','Cancel':'取消','Save':'保存','Text content':'文字内容','Conflict: another edit arrived. Refresh, then retry your action. Your gesture was not applied.':'版本冲突：其他编辑已到达。请重新读取后重试，本次操作未写入。','Open canvas':'打开画布','Draw together. The agent uses the same document and operation history.':'与 AI 共用文档和操作历史。','Nothing selected':'未选择元素','Comments':'批注','Resolve':'解决','Add comment':'添加批注','Comment text':'批注内容','Send':'发送','Selection':'选择范围','Version':'版本','Zoom in':'放大','Zoom out':'缩小','Send to AI':'发给 AI','AI is editing':'AI 正在编辑','Clear canvas':'清空画板','Confirm clear':'再点一次清空','Semicircle':'半圆','More':'更多','Export PNG':'导出图片','Fragment erase':'按涂擦除','Whole erase':'整块清除','Size':'大小','Width':'粗细','Copy all':'复制全部','Close':'关闭','Fill':'填充','Fill color':'填充色','Filled shapes use Whole erase':'填充形状请用「整块清除」','Export PNG (white)':'导出图片（白底）','Export PNG (transparent)':'导出图片（透明背景）','Rotate left':'左转 90°','Rotate right':'右转 90°','Rotate':'旋转','Numbers':'编号','More actions':'更多操作','Comment':'批注','Comment hint':'给选中图元写一条批注（AI 读画布时能看到，不会发到对话）','Font size':'字号','Text color':'文字颜色','Plain':'普通','Marker':'马克笔','Pencil':'铅笔','Watercolor':'水彩笔','Fountain pen':'钢笔','Pen type':'画笔','Pen size':'画笔大小','Pen color':'画笔颜色','Border color':'边框颜色','Border width':'边框粗细','Custom color':'自定义颜色','Fill input':'填入输入框','Fill short':'填入','Fill hint':'把画布内容填进对话输入框，不发送，你可以改完再发','Send hint':'直接发送到当前会话，我会读取画布并继续处理',
+      'Please enter the canvas id to open':'请输入打开的画布 id',
+      'Canvas document id; defaults to this session. Enter another id to open a different canvas.':'画布文档 id；默认为当前会话，输入其他 id 可打开别的画布。',
+      'Re-read this canvas from the server':'从服务器重新读取当前画布',
+      'Open the entered canvas id in this panel':'在当前面板打开输入的画布 id（不会切换会话）'
     };
     const sessionDoc = id => 's-' + String(id).replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 72);
     const toast = {text: '', at: 0, listeners: new Set(), push(text) {this.text = text; this.at = Date.now(); for (const fn of this.listeners) fn();}};
     // Silent reads for the header watcher: same authenticated transport as the panel, no screen or input use.
-    const readDoc = async doc => {
+    const readDoc = async (doc, sinceSeq) => {
       const send = globalThis.__DSH_TRANSPORT__?.fetch ?? ((input, init) => globalThis.fetch(input, init));
-      const response = await send('api/intent-canvas/read', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({doc})});
+      const response = await send('api/intent-canvas/read', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(sinceSeq == null ? {doc} : {doc, sinceSeq})});
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const r = await response.json();
       if (!r?.ok) throw Object.assign(new Error(r?.error?.message || 'read failed'), {code: r?.error?.code});
@@ -133,27 +191,48 @@ window.__ModuleLoader__.load({
           }
         }catch(e){report(e);}
       };
-      const [view,setView]=useState({x:90,y:70,z:1}),[grid,setGrid]=useState(true);
+      const [grid,setGrid]=useState(true);
       const [color,setColor]=useState('#356c59'),[width,setWidth]=useState(2.5),[radius,setRadius]=useState(14),[consult,setConsult]=useState(null),[editor,setEditor]=useState(null),[comment,setComment]=useState(''),[eraseWhole,setEraseWhole]=useState(false),[fillOn,setFillOn]=useState(false),[fillColor,setFillColor]=useState('#cfe3d5'),[noteFill,setNoteFill]=useState('#f4e9ac'),[rotateMode,setRotateMode]=useState(false),[badges,setBadges]=useState(true),[penKind,setPenKind]=useState('plain'),[penPanel,setPenPanel]=useState(null),[fontSize,setFontSize]=useState(16),[textColor,setTextColor]=useState('#26382d');
-      const root=useRef(null),svg=useRef(null),live=useRef({}),clipboard=useRef(null),space=useRef(false),readSeq=useRef(0),rafRef=useRef(0),paintRef=useRef(null),viewTimer=useRef(0),handleLayer=useRef(null),hoverRef=useRef(null),editorRef=useRef(null),styleTimer=useRef(0);
+      const viewRef=useRef({x:90,y:70,z:1});
+      const root=useRef(null),svg=useRef(null),sceneRef=useRef(null),live=useRef({}),clipboard=useRef(null),space=useRef(false),readSeq=useRef(0),rafRef=useRef(0),paintScope=useRef(''),paintRef=useRef(null),zoomLabel=useRef(null),hoverRef=useRef(null),editorRef=useRef(null),styleTimer=useRef(0),busyTimer=useRef(0),painted=useRef({scene:'',overlay:'',w:0,h:0});
       // Switching to the eraser drops every selection, so no handle layer or selection bar stays behind.
       const chooseTool=k=>{if(live.current.editor)saveEditor();cancel();setTool(k);setMoreOpen(false);setPenPanel(null);if(k==='erase'){setSelection([]);hoverRef.current=null;}};
-      // Paint straight from the refs: the browser never waits for a React commit during a gesture.
-      const syncView=()=>{if(viewTimer.current)clearTimeout(viewTimer.current);viewTimer.current=setTimeout(()=>{viewTimer.current=0;setView(live.current.view);},150);};
-      const queuePaint=()=>{if(rafRef.current)return;const raf=typeof requestAnimationFrame==='function'?requestAnimationFrame:fn=>{fn();return 0;};rafRef.current=raf(()=>{rafRef.current=0;paintRef.current&&paintRef.current();});};
-      const dropQueuedGesture=()=>{if(!rafRef.current)return;if(typeof cancelAnimationFrame==='function')cancelAnimationFrame(rafRef.current);rafRef.current=0;};
-      useEffect(()=>()=>{clearTimeout(viewTimer.current);clearTimeout(styleTimer.current);dropQueuedGesture();live.current.gesture=null;},[docId]);
-      live.current={doc,docId,busy,gesture:live.current.gesture,editor,selection,view,tool,color,width,radius,penKind,grid,badges};
+      // Viewport is not React state: the canvas, chrome and cursor all read one live object, so no layer arrives late.
+      const setLiveView=next=>{live.current.view=next;viewRef.current=next;};
+      const syncZoomLabel=()=>{if(zoomLabel.current)zoomLabel.current.textContent=Math.round((live.current.view?.z||1)*100)+'%';};
+      // Overlay-only frames keep the committed scene bitmap untouched while a stroke or marquee is in flight.
+      const queuePaint=(scope='all')=>{if(scope==='all')paintScope.current='all';else if(!paintScope.current)paintScope.current='overlay';if(rafRef.current)return;const raf=typeof requestAnimationFrame==='function'?requestAnimationFrame:fn=>{fn();return 0;};rafRef.current=raf(()=>{rafRef.current=0;const nextScope=paintScope.current||'all';paintScope.current='';paintRef.current&&paintRef.current(true,nextScope);});};
+      const dropQueuedGesture=()=>{paintScope.current='';if(!rafRef.current)return;if(typeof cancelAnimationFrame==='function')cancelAnimationFrame(rafRef.current);rafRef.current=0;};
+      useEffect(()=>()=>{clearTimeout(styleTimer.current);clearTimeout(busyTimer.current);dropQueuedGesture();live.current.gesture=null;},[docId]);
+      // Decoded images arrive after the requesting frame, so every mounted panel repaints once when one loads.
+      useEffect(()=>{const fn=()=>{paintRef.current&&paintRef.current(true);};repainters.add(fn);return()=>{repainters.delete(fn);};},[]);
+      // Theme changes and DPR moves must invalidate both cached layers even when no document edit arrives.
+      useEffect(()=>{if(typeof window==='undefined'||typeof document==='undefined')return;
+        const obs=typeof MutationObserver==='function'?new MutationObserver(()=>queuePaint()):null;
+        obs?.observe(document.documentElement,{attributes:true,attributeFilter:['class','style','data-theme']});
+        const mq=typeof matchMedia==='function'?matchMedia('(prefers-color-scheme: dark)'):null;
+        const onResize=()=>queuePaint();window.addEventListener('resize',onResize);mq?.addEventListener?.('change',onResize);
+        if(document.fonts?.ready)document.fonts.ready.then(()=>queuePaint()).catch(()=>{});
+        return()=>{obs?.disconnect();window.removeEventListener('resize',onResize);mq?.removeEventListener?.('change',onResize);};},[]);
+      live.current={doc,docId,busy,gesture:live.current.gesture,editor,selection,view:viewRef.current,tool,color,width,radius,penKind,grid,badges};
       const report=e=>setError(e?.code==='VERSION_CONFLICT'?t('Conflict: another edit arrived. Refresh, then retry your action. Your gesture was not applied.'):(e?.message||String(e)));
       const rpc=async(method,args)=>{ const send=globalThis.__DSH_TRANSPORT__?.fetch??((input,init)=>globalThis.fetch(input,init)); const response=await send(`api/intent-canvas/${method}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(args)}); if(!response.ok)throw new Error(`${t('Canvas transport failed')}: HTTP ${response.status}`); const r=await response.json(); if(!r?.ok)throw Object.assign(new Error(r?.error?.message||t('Canvas request failed')),{code:r?.error?.code}); return r; };
       const refresh=async(force=false)=>{
-        const s=live.current;if(!force&&(s.busy||s.gesture||s.editor))return;
+        const s=live.current;if(!force&&(s.busy||s.gesture||s.editor))return false;
         const seq=++readSeq.current, id=s.docId, version=s.doc?.version;
-        try { const r=await rpc('read',{doc:id}); const now=live.current;
-          if(seq!==readSeq.current||now.docId!==id||now.busy||now.gesture||now.editor)return;
+        try { const r=await rpc('read',force?{doc:id}:{doc:id,sinceSeq:version}); const now=live.current;
+          if(seq!==readSeq.current||now.docId!==id||now.busy||now.gesture||now.editor)return false;
+          if(!force&&r.unchanged)return true;
           watchActivity(r);
-          if(!now.doc||r.document.version!==version){setDoc(r.document);setSelection(ids=>ids.filter(id=>r.document.elements.some(e=>e.id===id)));if(!fitted.current){fitted.current=true;setTimeout(()=>fitRef.current?.(),40);}}
-        } catch(e){if(seq===readSeq.current)report(e);}
+          if(force||!now.doc||r.document.version!==version){setDoc(r.document);setSelection(ids=>ids.filter(id=>r.document.elements.some(e=>e.id===id)));if(!fitted.current){fitted.current=true;setTimeout(()=>fitRef.current?.(),40);}}
+          return true;
+        } catch(e){if(seq===readSeq.current)report(e);return false;}
+      };
+      // The document field switches boards; on the current board the same button is an explicit reload instead of a silent no-op.
+      const openDoc=async()=>{
+        const id=inputId.trim();if(!id||busy||live.current.gesture||editor)return;
+        if(id!==docId){setDocId(id);toast.push(t('Opened the document'));return;}
+        if(await refresh(true))toast.push(t('Reloaded the canvas'));
       };
       useEffect(()=>{setDoc(null);setSelection([]);setConsult(null);setError('');live.current.docId=docId;live.current.doc=null;fitted.current=false;autoFit.current=true;refresh(true);const timer=setInterval(()=>refresh(),1100);const focus=()=>refresh();window.addEventListener('focus',focus);return()=>{clearInterval(timer);window.removeEventListener('focus',focus);++readSeq.current;};},[docId]);
       // Only a real WIDTH change (docking, sidebar resize) may reframe; chrome appearing while drawing must not.
@@ -162,12 +241,21 @@ window.__ModuleLoader__.load({
         observer.observe(el);return()=>observer.disconnect();},[docId]);
       const commit=async ops=>{const s=live.current;if(!s.doc||!ops.length)return null;
         // A gesture that finishes while the previous commit is still in flight waits for it instead of being dropped.
-        for(let i=0;i<40&&s.busy;i++)await new Promise(r=>setTimeout(r,25));
+        for(let i=0;i<200&&s.busy;i++)await new Promise(r=>setTimeout(r,25));
         if(s.busy||!s.doc)return null;
-        live.current.busy=true;setBusy(true);setError('');++readSeq.current;
-        try{const r=await rpc('apply',{doc:s.docId,baseVersion:s.doc.version,ops});if(live.current.docId===s.docId){setDoc(r.document);live.current.doc=r.document;setSelection(ids=>ids.filter(id=>r.document.elements.some(e=>e.id===id)));}watchActivity(r);return r;}
-        catch(e){report(e);return null;}finally{live.current.busy=false;setBusy(false);}};
+        live.current.busy=true;clearTimeout(busyTimer.current);busyTimer.current=setTimeout(()=>setBusy(true),120);setError('');++readSeq.current;
+        try{const r=await rpc('apply',{doc:s.docId,baseVersion:s.doc.version,ops});
+          if(live.current.docId===s.docId){
+            live.current.doc=r.document;
+            // The frozen preview stays on screen until React paints the committed document; no blank frame, no extra full paint.
+            const applyState=()=>{setDoc(r.document);setSelection(ids=>ids.filter(id=>r.document.elements.some(e=>e.id===id)));};
+            if(typeof React.startTransition==='function')React.startTransition(applyState);else applyState();
+          }
+          watchActivity(r);return r;}
+        catch(e){report(e);return null;}finally{clearTimeout(busyTimer.current);busyTimer.current=0;live.current.busy=false;setBusy(false);}};
       const world=e=>{const r=svg.current.getBoundingClientRect(),v=live.current.view;return[(e.clientX-r.left-v.x)/v.z,(e.clientY-r.top-v.y)/v.z];};
+      // W3C pressure is 0.5 for a plain mouse, so only a real stylus contributes a width signal.
+      const pressureOf=e=>e?.pointerType==='pen'&&Number.isFinite(e.pressure)?Math.max(.05,Math.min(1,e.pressure)):null;
       const descendants=ids=>{const all=new Set(ids);let n;do{n=all.size;doc.elements.forEach(e=>{if(all.has(e.parent))all.add(e.id);});}while(n!==all.size);return all;};
       const roots=ids=>ids.filter(id=>{let e=doc.elements.find(e=>e.id===id);while(e?.parent){if(ids.includes(e.parent))return false;e=doc.elements.find(x=>x.id===e.parent);}return true;});
       const selected=doc?doc.elements.filter(e=>selection.includes(e.id)):[],selectionBounds=bounds(selected);
@@ -175,10 +263,10 @@ window.__ModuleLoader__.load({
       const centerOf=r=>[r[0]+r[2]/2,r[1]+r[3]/2];
       const localPoint=(p,e)=>{let q=p,cur=e;const chain=[];while(cur){chain.unshift(cur);cur=cur.parent?doc.elements.find(x=>x.id===cur.parent):null;}
         for(const el of chain){const a=(Number(el.rotation)||0)*Math.PI/180;if(a)q=rotPoint(q,centerOf(el.rect),-a);}return q;};
-      const pick=p=>{for(const e of [...doc.elements].reverse()){if(e.kind==='group')continue;const r=e.rect,pad=5/view.z,q=localPoint(p,e);if(!inside(q,[r[0]-pad,r[1]-pad,r[2]+pad*2,r[3]+pad*2]))continue;
+      const pick=p=>{for(const e of [...doc.elements].reverse()){if(e.kind==='group')continue;const r=e.rect,pad=5/(live.current.view?.z||1),q=localPoint(p,e);if(!inside(q,[r[0]-pad,r[1]-pad,r[2]+pad*2,r[3]+pad*2]))continue;
           if(e.kind==='path'){let near=false;const pts=e.points.map(o=>[o[0]+r[0],o[1]+r[1]]);for(let i=0;i<pts.length;i++){const a=pts[i],b=pts[Math.min(i+1,pts.length-1)],dx=b[0]-a[0],dy=b[1]-a[1],l=dx*dx+dy*dy,k=l?Math.max(0,Math.min(1,((q[0]-a[0])*dx+(q[1]-a[1])*dy)/l)):0;if(Math.hypot(q[0]-a[0]-k*dx,q[1]-a[1]-k*dy)<pad+width){near=true;break;}}if(!near)continue;}
           let top=e;while(top.parent){const parent=doc.elements.find(x=>x.id===top.parent);if(!parent)break;top=parent;}return top;}return null;};
-      const beginEditor=(element,p)=>{setEditor({id:element?.id||null,kind:element?.kind||tool,rect:element?.rect||[p[0],p[1],tool==='note'?200:180,tool==='note'?140:55],text:element?.text||'',fontSize:element?.fontSize||fontSize,textColor:element?.textColor||textColor});};
+      const beginEditor=(element,p)=>{setEditor({id:element?.id||null,kind:element?.kind||tool,rect:element?.rect||[p[0],p[1],tool==='note'?200:180,tool==='note'?140:55],text:element?.text||'',fontSize:element?.fontSize||fontSize,textColor:element?.textColor||textColor,view:{...live.current.view}});};
       // Read from the ref and clear it first, so a blur plus a click cannot commit the same text twice.
       const saveEditor=async()=>{const e=live.current.editor;if(!e)return;live.current.editor=null;setEditor(null);if(!e.text.trim()&&!e.id)return;
         setFontSize(e.fontSize||16);setTextColor(e.textColor||textColor);
@@ -189,32 +277,66 @@ window.__ModuleLoader__.load({
         commit(ids.map(id=>{const cur=source.elements.find(x=>x.id===id);const next=(((Number(cur?.rotation)||0)+deg)%360+360)%360;return {type:'update',id,patch:{rotation:next}};}));};
       const action=(type,extra={})=>{if(!doc)return;if(type==='copy'){copySelection();return;}if(type==='paste'){if(clipboard.current)commit([{type:'paste',elements:clipboard.current}]);return;}if(['undo','redo'].includes(type)){commit([{type}]);return;}if(!selection.length)return;const ids=roots(selection);if(type==='group'){const id=uid();commit([{type,ids,groupId:id}]).then(r=>r&&setSelection([id]));return;}if(type==='ungroup'){commit(ids.filter(id=>doc.elements.find(e=>e.id===id)?.kind==='group').map(id=>({type,id})));return;}commit([{type,ids,...extra}]);};
       const cancel=()=>{live.current.gesture=null;live.current.editor=null;setEditor(null);setConsult(null);paintRef.current&&paintRef.current();};
-      const keyDown=e=>{if(!doc||['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName))return;const mod=e.ctrlKey||e.metaKey,k=e.key.toLowerCase();if(e.code==='Space'){space.current=true;e.preventDefault();return;}if(k==='escape'){setRotateMode(false);cancel();return;}if(mod&&k==='z'){e.preventDefault();action(e.shiftKey?'redo':'undo');return;}if(mod&&k==='y'){e.preventDefault();action('redo');return;}if(mod&&k==='a'){e.preventDefault();setSelection(doc.elements.filter(e=>!e.parent).map(e=>e.id));return;}if(mod&&['c','v','d','g'].includes(k)){e.preventDefault();action(k==='c'?'copy':k==='v'?'paste':k==='d'?'duplicate':e.shiftKey?'ungroup':'group');return;}if(k==='delete'||k==='backspace'){e.preventDefault();action('delete');return;}if(['arrowleft','arrowright','arrowup','arrowdown'].includes(k)){e.preventDefault();const n=e.shiftKey?10:1;action('move',{dx:k==='arrowleft'?-n:k==='arrowright'?n:0,dy:k==='arrowup'?-n:k==='arrowdown'?n:0});return;}if(k==='['||k===']'){action('reorder',{position:k==='['?'back':'front'});return;}const shortcuts={v:'select',h:'pan',p:'pen',e:'erase',t:'text',r:'rect',o:'ellipse',a:'arrow',n:'note',l:'lasso'};if(shortcuts[k]&&!mod)chooseTool(shortcuts[k]);};
+      const keyDown=e=>{if(!doc||['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName))return;const mod=e.ctrlKey||e.metaKey,k=e.key.toLowerCase();if(e.code==='Space'){space.current=true;e.preventDefault();return;}if(k==='escape'){setRotateMode(false);cancel();return;}if(mod&&k==='z'){e.preventDefault();action(e.shiftKey?'redo':'undo');return;}if(mod&&k==='y'){e.preventDefault();action('redo');return;}if(mod&&k==='a'){e.preventDefault();setSelection(doc.elements.filter(e=>!e.parent).map(e=>e.id));return;}if(mod&&k==='v'){e.preventDefault();pasteFromSystem();return;}if(mod&&['c','d','g'].includes(k)){e.preventDefault();action(k==='c'?'copy':k==='d'?'duplicate':e.shiftKey?'ungroup':'group');return;}if(k==='delete'||k==='backspace'){e.preventDefault();action('delete');return;}if(['arrowleft','arrowright','arrowup','arrowdown'].includes(k)){e.preventDefault();const n=e.shiftKey?10:1;action('move',{dx:k==='arrowleft'?-n:k==='arrowright'?n:0,dy:k==='arrowup'?-n:k==='arrowdown'?n:0});return;}if(k==='['||k===']'){action('reorder',{position:k==='['?'back':'front'});return;}const shortcuts={v:'select',h:'pan',p:'pen',e:'erase',t:'text',r:'rect',o:'ellipse',a:'arrow',n:'note',l:'lasso'};if(shortcuts[k]&&!mod)chooseTool(shortcuts[k]);};
       useEffect(()=>{const release=()=>{space.current=false;};window.addEventListener('keyup',release);window.addEventListener('blur',release);return()=>{window.removeEventListener('keyup',release);window.removeEventListener('blur',release);};},[]);
       const pointerDown=e=>{if(!doc||e.button>1)return;
         // Clicking anywhere outside the text box commits what was typed instead of dropping it.
         if(live.current.editor){saveEditor();return;}
         root.current.focus();const p=world(e);e.currentTarget.setPointerCapture(e.pointerId);let g;
-        // A handle always wins, whatever tool is active; otherwise drawing a stroke right after selecting looked like "no response".
-        const rotating=e.target.getAttribute('data-rotate'),handle=e.target.getAttribute('data-resize');
+        // A handle always wins, whatever tool is active; hit-testing uses the same screen geometry that draws it.
+        const cr=svg.current.getBoundingClientRect(),handle=hitHandleAt(e.clientX-cr.left,e.clientY-cr.top);
         // Rotate mode: any drag rotates the selection, so consecutive rotations never depend on the small handle.
         if(rotateMode&&selectionBounds){const c=[selectionBounds[0]+selectionBounds[2]/2,selectionBounds[1]+selectionBounds[3]/2];
           g={kind:'rotate',center:c,ids:roots(selection),start:Math.atan2(p[1]-c[1],p[0]-c[0]),angle:0};}
-        else if(rotating&&selectionBounds){const c=[selectionBounds[0]+selectionBounds[2]/2,selectionBounds[1]+selectionBounds[3]/2];
+        else if(handle==='rotate'&&selectionBounds){const c=[selectionBounds[0]+selectionBounds[2]/2,selectionBounds[1]+selectionBounds[3]/2];
           g={kind:'rotate',center:c,ids:roots(selection),start:Math.atan2(p[1]-c[1],p[0]-c[0]),angle:0};}
         else if(handle&&selectionBounds)g={kind:'resize',handle,start:p,end:p,rect:selectionBounds,ids:roots(selection)};
         // Alt-drag on a selected shape rotates too, so rotation never depends on hitting the small handle.
         else if(e.altKey&&selectionBounds&&pick(p)){const c=[selectionBounds[0]+selectionBounds[2]/2,selectionBounds[1]+selectionBounds[3]/2];
           g={kind:'rotate',center:c,ids:roots(selection),start:Math.atan2(p[1]-c[1],p[0]-c[0]),angle:0};}
-        else if(space.current||e.button===1||tool==='pan')g={kind:'pan',start:[e.clientX,e.clientY],original:view};
-        else if(tool==='erase')g={kind:'erase',points:[p]};else if(tool==='pen'||tool==='lasso')g={kind:tool,points:[p]};
+        else if(space.current||e.button===1||tool==='pan')g={kind:'pan',start:[e.clientX,e.clientY],original:{...live.current.view}};
+        else if(tool==='erase')g={kind:'erase',points:[p]};else if(tool==='pen'||tool==='lasso'){const pr=tool==='pen'?pressureOf(e):null;g={kind:tool,points:[p],...(pr!==null?{pressures:[pr]}:{})};}
         else if(['rect','ellipse','arrow','semi'].includes(tool))g={kind:tool,start:p,end:p};
         else if(tool==='text'||tool==='note'){beginEditor(null,p);return;}
         else {const hit=pick(p);if(hit){let ids=selection.includes(hit.id)?selection:e.shiftKey?[...selection,hit.id]:[hit.id];if(e.shiftKey&&selection.includes(hit.id)){ids=selection.filter(id=>id!==hit.id);setSelection(ids);return;}setSelection(ids);g={kind:'move',start:p,end:p,ids:roots(ids)};}else{if(!e.shiftKey){setSelection([]);setRotateMode(false);}g={kind:'box',start:p,end:p,add:e.shiftKey?selection:[]};}}
-        live.current.gesture=g;if(handleLayer.current)handleLayer.current.style.opacity='0';queuePaint();};
-      const pointerMove=e=>{const g=live.current.gesture;if(!g){if(live.current.tool==='erase'){hoverRef.current=world(e);queuePaint();}return;}let next;if(g.kind==='pan'){autoFit.current=false;live.current.view={...g.original,x:g.original.x+e.clientX-g.start[0],y:g.original.y+e.clientY-g.start[1]};queuePaint();syncView();return;}const p=world(e);if(g.kind==='rotate'){const a=Math.atan2(p[1]-g.center[1],p[0]-g.center[0]);let d=(a-g.start)*180/Math.PI;if(e.shiftKey)d=Math.round(d/15)*15;live.current.gesture={...g,angle:d};queuePaint();return;}if(g.points){const last=g.points[g.points.length-1];if(Math.hypot(p[0]-last[0],p[1]-last[1])<1.5/view.z||g.points.length>=1500)return;next={...g,points:[...g.points,p]};}else next={...g,end:p};live.current.gesture=next;queuePaint();};
+        live.current.gesture=g;queuePaint();};
+      const pointerMove=e=>{const g=live.current.gesture;
+        // A frozen commit preview must not follow the pointer, but the cursor should still respond immediately.
+        if(g?.frozen){const st=live.current;if(svg.current&&st.tool!=='erase')svg.current.style.cursor=rotateMode&&selection.length?'grab':st.tool==='pan'?'grab':st.tool==='select'?'default':'crosshair';return;}
+        if(!g){const st=live.current;
+          if(st.tool==='erase'){hoverRef.current=world(e);queuePaint('overlay');}
+          else if(svg.current){const r=svg.current.getBoundingClientRect(),hd=hitHandleAt(e.clientX-r.left,e.clientY-r.top);
+            const base=rotateMode&&selection.length?'grab':st.tool==='pan'?'grab':st.tool==='select'?'default':'crosshair';
+            svg.current.style.cursor=hd?(hd==='rotate'?'grab':cursorOf(hd)):(st.tool==='select'&&pick(world(e))?'move':base);}
+          return;}let next;if(g.kind==='pan'){autoFit.current=false;setLiveView({...g.original,x:g.original.x+e.clientX-g.start[0],y:g.original.y+e.clientY-g.start[1]});queuePaint();return;}const p=world(e);if(g.kind==='rotate'){const a=Math.atan2(p[1]-g.center[1],p[0]-g.center[0]);let d=(a-g.start)*180/Math.PI;if(e.shiftKey)d=Math.round(d/15)*15;live.current.gesture={...g,angle:d};queuePaint();return;}
+        if(g.points){
+          // Coalesced events keep the sub-frame samples Chrome batches into one pointermove, so a fast curve stays a curve.
+          const r=svg.current.getBoundingClientRect(),v=live.current.view,min=.9/Math.max(.08,v.z),cap=3000;
+          const raw=typeof e.getCoalescedEvents==='function'?e.getCoalescedEvents():null;
+          const samples=raw&&raw.length>1?raw.slice():[],tail=samples[samples.length-1];
+          if(!tail||tail.clientX!==e.clientX||tail.clientY!==e.clientY)samples.push(e);
+          const pts=g.points.slice(),press=g.pressures?g.pressures.slice():null;
+          for(const q of samples){if(pts.length>=cap)break;
+            const x=(q.clientX-r.left-v.x)/v.z,y=(q.clientY-r.top-v.y)/v.z,last=pts[pts.length-1];
+            if(Math.hypot(x-last[0],y-last[1])<min)continue;
+            pts.push([x,y]);if(press){const pr=pressureOf(q);press.push(pr??press[press.length-1]??.5);}}
+          if(pts.length===g.points.length)return;
+          next={...g,points:pts,...(press?{pressures:press}:{})};
+        }
+        else {
+          let q=p;
+          // Shift constrains shapes to a square, moves to one axis, and corner resizes to the original aspect ratio.
+          if(e.shiftKey&&(g.kind==='rect'||g.kind==='ellipse'||g.kind==='semi')){const dx=p[0]-g.start[0],dy=p[1]-g.start[1],m=Math.max(Math.abs(dx),Math.abs(dy));q=[g.start[0]+(dx<0?-m:m),g.start[1]+(dy<0?-m:m)];}
+          else if(e.shiftKey&&g.kind==='move'){const dx=p[0]-g.start[0],dy=p[1]-g.start[1];q=Math.abs(dx)>=Math.abs(dy)?[p[0],g.start[1]]:[g.start[0],p[1]];}
+          else if(e.shiftKey&&g.kind==='resize'&&g.handle.length===2){const r=g.rect,left=g.handle.includes('w'),top=g.handle.includes('n'),ax=left?r[0]+r[2]:r[0],ay=top?r[1]+r[3]:r[1],ratio=(r[2]||1)/(r[3]||1);
+            let w=Math.abs(p[0]-ax),h=Math.abs(p[1]-ay);if(w/(h||1)>ratio)h=w/ratio;else w=h*ratio;q=[left?ax-w:ax+w,top?ay-h:ay+h];}
+          next={...g,end:q};
+        }
+        live.current.gesture=next;
+        // Move/resize preview committed elements inside the scene; shape and marquee previews only touch the overlay.
+        if(g.kind==='move'||g.kind==='resize')queuePaint();else queuePaint('overlay');};
       // Whole-stroke eraser: any element the eraser trail touches is removed in one operation.
-      const eraserHits=pts=>{const pad=radius/view.z,ids=new Set();
+      const eraserHits=pts=>{const pad=radius/(live.current.view?.z||1),ids=new Set();
         for(const e of doc.elements){if(e.kind==='group')continue;const r=e.rect;let near=false;
           for(const p of pts){if(p[0]<r[0]-pad||p[0]>r[0]+r[2]+pad||p[1]<r[1]-pad||p[1]>r[1]+r[3]+pad)continue;
             if(e.kind==='path'&&e.points?.length){
@@ -226,31 +348,101 @@ window.__ModuleLoader__.load({
             if(near)break;}
           if(near)ids.add(e.id);}
         return roots([...ids]);};
-      const pointerUp=async e=>{const g=live.current.gesture;if(!g)return;dropQueuedGesture();live.current.gesture=null;if(handleLayer.current)handleLayer.current.style.opacity='';queuePaint();if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);if(g.kind==='pan'){setView(live.current.view);return;}
-        if(g.kind==='erase'){if(eraseWhole){const ids=eraserHits(g.points);if(ids.length)await commit([{type:'delete',ids}]);return;}await commit([{type:'erasePath',points:g.points,radius:radius/view.z}]);return;}
-        if(g.kind==='move'){const dx=g.end[0]-g.start[0],dy=g.end[1]-g.start[1];if(dx||dy)await commit([{type:'move',ids:g.ids,dx,dy}]);return;}
-        if(g.kind==='rotate'){if(Math.abs(g.angle)>0.05){const liveDoc=live.current.doc||doc;const ops=g.ids.map(id=>{const cur=liveDoc.elements.find(x=>x.id===id);const next=(((Number(cur?.rotation)||0)+g.angle)%360+360)%360;return {type:'update',id,patch:{rotation:Math.round(next*10)/10}};});await commit(ops);}return;}
-        if(g.kind==='resize'){const r=g.rect,n=resizeRect(r,g.handle,g.start,g.end);const min=8/view.z;
+      // Local copy of the engine's capsule split: the eraser result is painted on release instead of after the durable write.
+      const eLerp=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
+      const eDot=(a,b)=>a[0]*b[0]+a[1]*b[1];
+      const eSub=(a,b)=>[a[0]-b[0],a[1]-b[1]];
+      const eDist2=(p,a,b)=>{const v=eSub(b,a),l=eDot(v,v),t=l?Math.max(0,Math.min(1,eDot(eSub(p,a),v)/l)):0,q=eSub(p,eLerp(a,b,t));return eDot(q,q);};
+      const eraseOutline=e=>{const [x,y,w,h]=e.rect;if(e.kind==='ellipse'||e.kind==='circle'){const cx=x+w/2,cy=y+h/2,rx=w/2,ry=h/2,pts=[];for(let i=0;i<=64;i++){const a=Math.PI*2*i/64;pts.push([cx+rx*Math.cos(a),cy+ry*Math.sin(a)]);}return pts;}return [[x,y],[x+w,y],[x+w,y+h],[x,y+h],[x,y]];};
+      const eraseSplit=(poly,sweep,radius)=>{const capsules=sweep.length===1?[[sweep[0],sweep[0]]]:sweep.slice(1).map((p,i)=>[sweep[i],p]);
+        if(Math.max(1,poly.length-1)*capsules.length>250000)return null;
+        const inside=p=>capsules.some(([a,b])=>eDist2(p,a,b)<radius*radius-1e-10);
+        if(poly.length===1)return inside(poly[0])?[]:[poly];
+        if(poly.every(p=>p[0]===poly[0][0]&&p[1]===poly[0][1]))return inside(poly[0])?[]:[poly];
+        const fragments=[];let current=[],removed=false;const flush=()=>{if(current.length>1)fragments.push(current);current=[];};
+        for(let i=1;i<poly.length;i++){const a=poly[i-1],b=poly[i],v=eSub(b,a),vv=eDot(v,v),ts=[0,1];
+          if(vv===0)continue;
+          for(const [c,end] of capsules){
+            for(const center of [c,end]){const q=eSub(a,center),qb=2*eDot(q,v),qc=eDot(q,q)-radius*radius,disc=qb*qb-4*vv*qc;
+              if(disc>=0)for(const t of [(-qb-Math.sqrt(disc))/(2*vv),(-qb+Math.sqrt(disc))/(2*vv)])if(t>0&&t<1)ts.push(t);}
+            const axis=eSub(end,c),length=Math.hypot(...axis);
+            if(length){const n=[-axis[1]/length,axis[0]/length],den=eDot(v,n);
+              if(den)for(const sign of [-1,1]){const t=(sign*radius-eDot(eSub(a,c),n))/den;if(t>0&&t<1)ts.push(t);}}
+          }
+          ts.sort((x,y)=>x-y);
+          for(let j=1;j<ts.length;j++){const lo=ts[j-1],hi=ts[j];if(hi-lo<1e-12)continue;
+            if(inside(eLerp(a,b,(lo+hi)/2))){removed=true;flush();}
+            else{if(!current.length)current.push(eLerp(a,b,lo));current.push(eLerp(a,b,hi));}}
+        }
+        flush();return removed?fragments:[poly];};
+      const eraseLocally=(d0,ids,sweep,radius)=>{const elements=d0.elements.slice();
+        for(const id of ids){const idx=elements.findIndex(e=>e.id===id);if(idx<0)continue;const e=elements[idx];
+          const world=e.kind==='path'?e.points.map(([x,y])=>[x+e.rect[0],y+e.rect[1]]):eraseOutline(e);
+          const parts=eraseSplit(world,sweep,radius+(Number(e.strokeWidth)||0)/2);
+          if(!parts)return null;
+          if(JSON.stringify(parts)===JSON.stringify([world]))continue;
+          elements.splice(idx,1);
+          const base=e.kind==='path'?{...e}:{...e,kind:'path',fill:'none'};
+          const replacements=parts.map((ps,i)=>{const x=Math.min(...ps.map(p=>p[0])),y=Math.min(...ps.map(p=>p[1]));
+            return {...base,id:i===0?e.id:uid(),rect:[x,y,Math.max(...ps.map(p=>p[0]))-x,Math.max(...ps.map(p=>p[1]))-y],points:ps.map(p=>[p[0]-x,p[1]-y]),...(e.kind==='path'?{}:{sharp:true})};});
+          elements.splice(idx,0,...replacements);}
+        return {...d0,elements};};
+      const pointerUp=async e=>{const g=live.current.gesture;if(!g||g.frozen)return;dropQueuedGesture();
+        if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);
+        const commits=['pen','erase','move','rotate','resize','rect','ellipse','arrow','semi'].includes(g.kind);
+        const frozen={...g,frozen:true};
+        // Keep the last preview alive until the committed document arrives, so release never blinks through an empty frame.
+        const finished=ok=>{if(live.current.gesture===frozen)live.current.gesture=null;if(!ok)queuePaint();};
+        if(commits){live.current.gesture=frozen;}else{live.current.gesture=null;queuePaint();}
+        if(g.kind==='pan'){return;}
+        if(g.kind==='erase'){
+          if(eraseWhole){const ids=eraserHits(g.points);if(ids.length){
+            const before=live.current.doc,remove=new Set(ids);let grew=true;
+            while(grew){grew=false;for(const e of before.elements){if(e.parent&&remove.has(e.parent)&&!remove.has(e.id)){remove.add(e.id);grew=true;}}}
+            live.current.doc={...before,elements:before.elements.filter(e=>!remove.has(e.id))};live.current.gesture=null;setDoc(live.current.doc);queuePaint();
+            const r=await commit([{type:'delete',ids}]);if(!r){live.current.doc=before;setDoc(before);queuePaint();}finished(!!r);
+          }else finished(false);return;}
+          // Fragment erase is for freehand ink and hollow outlines; filled shapes are whole-erase targets, not cuttable fragments.
+          const z=live.current.view?.z||1,pr=radius/z;
+          let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+          for(const p of g.points){if(p[0]<minX)minX=p[0];if(p[0]>maxX)maxX=p[0];if(p[1]<minY)minY=p[1];if(p[1]>maxY)maxY=p[1];}
+          const near=e=>{const r=e.rect,pad=pr+(Number(e.strokeWidth)||0)/2;return !(maxX<r[0]-pad||minX>r[0]+r[2]+pad||maxY<r[1]-pad||minY>r[1]+r[3]+pad);};
+          const fragIds=doc.elements.filter(e=>!e.parent&&e.kind!=='group'&&near(e)&&((e.kind==='path'&&!isSemiShape(e))||(['rect','ellipse','semi'].includes(e.kind)&&(!e.fill||e.fill==='none')))).map(e=>e.id);
+          if(!fragIds.length){
+            if(doc.elements.some(e=>!e.parent&&near(e)&&['rect','ellipse','semi','note'].includes(e.kind)&&e.fill&&e.fill!=='none'))toast.push(t('Filled shapes use Whole erase'));
+            finished(false);return;
+          }
+          // Show the cut at once; the durable write reconciles behind it instead of holding the screen for ~150ms.
+          const before=live.current.doc,optimistic=eraseLocally(before,fragIds,g.points,pr);
+          if(optimistic){live.current.doc=optimistic;live.current.gesture=null;setDoc(optimistic);queuePaint();}
+          const r=await commit([{type:'erasePath',ids:fragIds,points:g.points,radius:pr}]);
+          if(!r&&optimistic){live.current.doc=before;setDoc(before);queuePaint();}
+          finished(!!r);return;
+        }
+        if(g.kind==='move'){const dx=g.end[0]-g.start[0],dy=g.end[1]-g.start[1];if(dx||dy){const r=await commit([{type:'move',ids:g.ids,dx,dy}]);finished(!!r);}else finished(false);return;}
+        if(g.kind==='rotate'){if(Math.abs(g.angle)>0.05){const liveDoc=live.current.doc||doc;const ops=g.ids.map(id=>{const cur=liveDoc.elements.find(x=>x.id===id);const next=(((Number(cur?.rotation)||0)+g.angle)%360+360)%360;return {type:'update',id,patch:{rotation:Math.round(next*10)/10}};});const r=await commit(ops);finished(!!r);}else finished(false);return;}
+        if(g.kind==='resize'){const r=g.rect,n=resizeRect(r,g.handle,g.start,g.end);const min=8/(live.current.view?.z||1);
           if(n[2]<min){n[2]=min;if(g.handle.includes('w'))n[0]=r[0]+r[2]-min;}
           if(n[3]<min){n[3]=min;if(g.handle.includes('n'))n[1]=r[1]+r[3]-min;}
-          const sx=n[2]/(r[2]||1),sy=n[3]/(r[3]||1);await commit(g.ids.map(id=>{const old=doc.elements.find(e=>e.id===id).rect;return{type:'resize',id,rect:[n[0]+(old[0]-r[0])*sx,n[1]+(old[1]-r[1])*sy,Math.max(min,old[2]*sx),Math.max(min,old[3]*sy)]};}));return;}
+          const sx=n[2]/(r[2]||1),sy=n[3]/(r[3]||1);const done=await commit(g.ids.map(id=>{const old=doc.elements.find(e=>e.id===id).rect;return{type:'resize',id,rect:[n[0]+(old[0]-r[0])*sx,n[1]+(old[1]-r[1])*sy,Math.max(min,old[2]*sx),Math.max(min,old[3]*sy)]};}));finished(!!done);return;}
         if(g.kind==='box'||g.kind==='lasso'){const r=g.kind==='box'?normalize(g.start,g.end):bounds(g.points.map(p=>({rect:[...p,0,0]})));const pointInPoly=p=>{let inside=false;for(let i=0,j=g.points.length-1;i<g.points.length;j=i++){const a=g.points[i],b=g.points[j];if((a[1]>p[1])!==(b[1]>p[1])&&p[0]<(b[0]-a[0])*(p[1]-a[1])/(b[1]-a[1])+a[0])inside=!inside;}return inside;};const ids=doc.elements.filter(e=>!e.parent&&(g.kind==='lasso'?pointInPoly([e.rect[0]+e.rect[2]/2,e.rect[1]+e.rect[3]/2]):inside([e.rect[0],e.rect[1]],r)&&inside([e.rect[0]+e.rect[2],e.rect[1]+e.rect[3]],r))).map(e=>e.id);setSelection([...new Set([...(g.add||[]),...ids])]);if(g.kind==='lasso'&&ids.length)setConsult({ids});return;}
-        if(g.kind==='pen'&&g.points.length<2)return;
+        if(g.kind==='pen'&&g.points.length<2){finished(false);return;}
         const id=uid();let element;
-        if(g.kind==='pen'){const r=bounds(g.points.map(p=>({rect:[...p,0,0]})));element={id,kind:'path',rect:r,points:g.points.map(p=>[p[0]-r[0],p[1]-r[1]]),stroke:color,strokeWidth:width,fill:'none',pen:penKind};}
-        else{const r=normalize(g.start,g.end);if(r[2]<2&&r[3]<2)return;element={id,kind:g.kind,rect:r,stroke:color,strokeWidth:width,fill:fillOn&&(g.kind==='rect'||g.kind==='ellipse'||g.kind==='semi')?fillColor:'none'};
+        if(g.kind==='pen'){const r=bounds(g.points.map(p=>({rect:[...p,0,0]})));element={id,kind:'path',rect:r,points:g.points.map(p=>[p[0]-r[0],p[1]-r[1]]),stroke:color,strokeWidth:width,fill:'none',pen:penKind};if(g.pressures?.length===g.points.length&&g.pressures.some(v=>v<.45||v>.55))element.pressures=g.pressures.map(v=>Math.round(v*100)/100);}
+        else{const r=normalize(g.start,g.end);if(r[2]<2&&r[3]<2){finished(false);return;}element={id,kind:g.kind,rect:r,stroke:color,strokeWidth:width,fill:fillOn&&(g.kind==='rect'||g.kind==='ellipse'||g.kind==='semi')?fillColor:'none'};
           if(g.kind==='arrow')element.points=[g.start.map((v,i)=>v-r[i]),g.end.map((v,i)=>v-r[i])];
           // Semicircle draws like the other shapes: drag a box, the half disc fills its upper half.
           if(g.kind==='semi'){const cx=r[0]+r[2]/2,cy=r[1]+r[3],rx=r[2]/2,ry=r[3],pts=[];
             for(let i=0;i<=32;i++){const a=Math.PI+Math.PI*i/32;pts.push([cx+rx*Math.cos(a)-r[0],cy+ry*Math.sin(a)-r[1]]);}
-            element={id,kind:'path',rect:r,points:pts,stroke:color,strokeWidth:width,fill:fillOn?fillColor:'none'};}
+            element={id,kind:'path',rect:r,points:pts,stroke:color,strokeWidth:width,fill:fillOn?fillColor:'none',semi:true};}
         }
-        if(await commit([{type:'create',element}])){setSelection([id]);let closed=false;if(g.kind==='pen'&&g.points.length>12){const r=element.rect,a=g.points[0],b=g.points[g.points.length-1];closed=r[2]>24&&r[3]>24&&Math.hypot(a[0]-b[0],a[1]-b[1])<Math.max(r[2],r[3])*.28;}if(g.kind==='ellipse'||closed){const r=element.rect,ids=doc.elements.filter(e=>!e.parent&&inside([e.rect[0]+e.rect[2]/2,e.rect[1]+e.rect[3]/2],r)).map(e=>e.id);setConsult({id,ids});}}};
-      const zoom=(factor,anchor)=>{autoFit.current=false;const v=live.current.view,z=Math.max(.08,Math.min(8,v.z*factor)),a=anchor||[svg.current.clientWidth/2,svg.current.clientHeight/2];live.current.view={x:a[0]-(a[0]-v.x)*z/v.z,y:a[1]-(a[1]-v.y)*z/v.z,z};queuePaint();syncView();};
+        const created=await commit([{type:'create',element}]);
+        if(created){setSelection([id]);let closed=false;if(g.kind==='pen'&&g.points.length>12){const r=element.rect,a=g.points[0],b=g.points[g.points.length-1];closed=r[2]>24&&r[3]>24&&Math.hypot(a[0]-b[0],a[1]-b[1])<Math.max(r[2],r[3])*.28;}if(g.kind==='ellipse'||closed){const r=element.rect,ids=doc.elements.filter(e=>!e.parent&&inside([e.rect[0]+e.rect[2]/2,e.rect[1]+e.rect[3]/2],r)).map(e=>e.id);setConsult({id,ids});}}
+        finished(!!created);};
+      const zoom=(factor,anchor)=>{autoFit.current=false;const v=live.current.view,z=Math.max(.08,Math.min(8,v.z*factor)),a=anchor||[svg.current.clientWidth/2,svg.current.clientHeight/2];setLiveView({x:a[0]-(a[0]-v.x)*z/v.z,y:a[1]-(a[1]-v.y)*z/v.z,z});queuePaint();syncZoomLabel();};
       // Fit keeps the drawing inside whichever column renders it, including the narrow right Sidebar.
-      const fit=()=>{if(!doc||!svg.current)return;const r=bounds(doc.elements.filter(e=>e.kind!=='group'));const w=svg.current.clientWidth,hh=svg.current.clientHeight;if(!w||!hh)return;if(!r){setView({x:Math.max(20,w/2-100),y:Math.max(20,hh/2-100),z:1});return;}const pad=Math.min(60,Math.max(14,w*.07));const z=Math.min(2,Math.max(.08,Math.min((w-pad*2)/(r[2]||1),(hh-pad*2)/(r[3]||1))));setView({x:w/2-(r[0]+r[2]/2)*z,y:hh/2-(r[1]+r[3]/2)*z,z});};
+      const fit=()=>{if(!doc||!svg.current)return;const r=bounds(doc.elements.filter(e=>e.kind!=='group'));const w=svg.current.clientWidth,hh=svg.current.clientHeight;if(!w||!hh)return;if(!r){setLiveView({x:Math.max(20,w/2-100),y:Math.max(20,hh/2-100),z:1});queuePaint();syncZoomLabel();return;}const pad=Math.min(60,Math.max(14,w*.07));const z=Math.min(2,Math.max(.08,Math.min((w-pad*2)/(r[2]||1),(hh-pad*2)/(r[3]||1))));setLiveView({x:w/2-(r[0]+r[2]/2)*z,y:hh/2-(r[1]+r[3]/2)*z,z});queuePaint();syncZoomLabel();};
       fitRef.current=fit;
-      const visualRect=e=>rectWith(e,live.current.gesture);
       const cursorOf=d=>d==='nw'||d==='se'?'nwse-resize':d==='ne'||d==='sw'?'nesw-resize':d==='n'||d==='s'?'ns-resize':'ew-resize';
       // Canvas 2D scene: one bitmap repaint per frame instead of rebuilding an SVG tree on every render.
       // The scene is drawn straight from live refs, so a drag never re-renders React; paint runs once per frame.
@@ -260,22 +452,74 @@ window.__ModuleLoader__.load({
         if(n[2]<min)n[2]=min;if(n[3]<min)n[3]=min;
         const sx=n[2]/(r[2]||1),sy=n[3]/(r[3]||1);
         return[n[0]+(e.rect[0]-r[0])*sx,n[1]+(e.rect[1]-r[1])*sy,Math.max(min,e.rect[2]*sx),Math.max(min,e.rect[3]*sy)];};
-      // One stroke geometry for every pen style: the fountain pen narrows with pointer speed like natural ink.
-      const strokePath=(ctx,pts,width,pen,color)=>{if(!pts||!pts.length)return;const w=Math.max(.5,Number(width)||2);
+      // Selection chrome and hit-testing share one geometry, so a handle is drawn exactly where it can be grabbed.
+      const selectionChrome=st=>{const chosen=(st.doc?.elements||[]).filter(e=>(st.selection||[]).includes(e.id));if(!chosen.length)return null;
+        const box=bounds(chosen.map(e=>({...e,rect:rectWith(e,st.gesture)})));
+        // A live rotate gesture must rotate the frame with the element, not leave it at the previous angle.
+        const liveTurn=st.gesture?.kind==='rotate'&&chosen.some(e=>st.gesture.ids?.includes(e.id))?(st.gesture.angle||0):0;
+        const angle=chosen.length===1?((Number(chosen[0].rotation)||0)+liveTurn)*Math.PI/180:0;
+        const cx=box[0]+box[2]/2,cy=box[1]+box[3]/2,v=st.view,z=v.z||1;
+        const toScreen=p=>[p[0]*z+v.x,p[1]*z+v.y];
+        const corners=[[box[0],box[1]],[box[0]+box[2],box[1]],[box[0]+box[2],box[1]+box[3]],[box[0],box[1]+box[3]]];
+        const rotCorners=angle?corners.map(p=>rotPoint(p,[cx,cy],angle)):corners;
+        const xs=rotCorners.map(p=>p[0]),ys=rotCorners.map(p=>p[1]);
+        const rotBox=[Math.min(...xs),Math.min(...ys),Math.max(...xs)-Math.min(...xs),Math.max(...ys)-Math.min(...ys)];
+        const frame=[[box[0]-4/z,box[1]-4/z],[box[0]+box[2]+4/z,box[1]-4/z],[box[0]+box[2]+4/z,box[1]+box[3]+4/z],[box[0]-4/z,box[1]+box[3]+4/z]]
+          .map(p=>toScreen(angle?rotPoint(p,[cx,cy],angle):p));
+        const handles=[['nw',box[0],box[1]],['n',box[0]+box[2]/2,box[1]],['ne',box[0]+box[2],box[1]],['e',box[0]+box[2],box[1]+box[3]/2],['se',box[0]+box[2],box[1]+box[3]],['s',box[0]+box[2]/2,box[1]+box[3]],['sw',box[0],box[1]+box[3]],['w',box[0],box[1]+box[3]/2]]
+          .map(([hd,x,y])=>{const p=angle?rotPoint([x,y],[cx,cy],angle):[x,y];const [sx,sy]=toScreen(p);return {hd,sx,sy,size:10};});
+        const [rx,ry]=toScreen([rotBox[0]+rotBox[2]/2,Math.max(rotBox[1]-22/z,(6-v.y)/z)]);
+        handles.push({hd:'rotate',sx:rx,sy:ry,size:16});
+        return {box,angle,frame,handles};};
+      // Reverse order so the rotate handle wins when it overlaps a corner at high zoom.
+      const hitHandleAt=(sx,sy)=>{const chrome=selectionChrome(live.current);if(!chrome)return null;
+        for(let i=chrome.handles.length-1;i>=0;i--){const h=chrome.handles[i];if(Math.abs(sx-h.sx)<=h.size/2+2&&Math.abs(sy-h.sy)<=h.size/2+2)return h.hd;}
+        return null;};
+      const drawSelectionChrome=(ctx,st,bg)=>{const chrome=selectionChrome(st);if(!chrome)return;
+        ctx.save();ctx.strokeStyle='#356c59';ctx.lineWidth=1;ctx.setLineDash([]);
+        ctx.beginPath();chrome.frame.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();ctx.stroke();
+        if(st.gesture){ctx.restore();return;}
+        for(const h of chrome.handles){
+          if(h.hd==='rotate'){ctx.beginPath();ctx.arc(h.sx,h.sy,8,0,Math.PI*2);ctx.fillStyle=bg;ctx.fill();ctx.lineWidth=1.5;ctx.stroke();
+            ctx.beginPath();ctx.arc(h.sx,h.sy,4.2,0,Math.PI*2);ctx.setLineDash([2,2]);ctx.lineWidth=1;ctx.stroke();ctx.setLineDash([]);}
+          else{ctx.fillStyle=bg;ctx.fillRect(h.sx-5,h.sy-5,10,10);ctx.lineWidth=1.2;ctx.strokeRect(h.sx-5,h.sy-5,10,10);}}
+        ctx.restore();};
+      // Stored points stay the raw decimated samples, so undo, hit-testing and erase see the same geometry.
+      // Rendering rebuilds a Catmull-Rom centerline: slow and fast strokes both stay round instead of faceted.
+      const traceStroke=(ctx,pts)=>{ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);
+        if(pts.length===2){ctx.lineTo(pts[1][0],pts[1][1]);return;}
+        for(let i=0;i<pts.length-1;i++){const p0=pts[i-1]||pts[i],p1=pts[i],p2=pts[i+1],p3=pts[i+2]||p2;
+          ctx.bezierCurveTo(p1[0]+(p2[0]-p0[0])/6,p1[1]+(p2[1]-p0[1])/6,p2[0]-(p3[0]-p1[0])/6,p2[1]-(p3[1]-p1[1])/6,p2[0],p2[1]);}};
+      const strokePath=(ctx,pts,width,pen,color,pressures,sharp)=>{if(!pts||!pts.length)return;const w=Math.max(.5,Number(width)||2);
         if(pts.length===1){ctx.fillStyle=color;ctx.beginPath();ctx.arc(pts[0][0],pts[0][1],Math.max(.6,w/2),0,Math.PI*2);ctx.fill();return;}
-        const pk=pen||'plain';
-        if(pk==='fountain'){const half=i=>{const a=pts[Math.max(0,i-1)],b=pts[i],c=pts[Math.min(pts.length-1,i+1)];
+        const pk=pen||'plain',pressed=i=>Array.isArray(pressures)&&pressures.length===pts.length?Math.max(.05,Math.min(1,Number(pressures[i])||0)):0;
+        // Natural ink: a variable-width filled ribbon. Pressure wins when a stylus reports it; otherwise speed tapers the nib.
+        if(pk==='fountain'||(pk==='plain'&&Array.isArray(pressures))){
+          const half=i=>{const p=pressed(i);if(p)return Math.max(.35,w*Math.max(.28,Math.min(1.3,.35+1.25*p)))/2;
+            const a=pts[Math.max(0,i-1)],b=pts[i],c=pts[Math.min(pts.length-1,i+1)];
             const seg=i?Math.hypot(b[0]-a[0],b[1]-a[1]):Math.hypot(c[0]-b[0],c[1]-b[1]);
             return Math.max(.4,w*Math.max(.28,Math.min(1.25,1.18-seg/18)))/2;};
-          const L=[],R=[];for(let i=0;i<pts.length;i++){const a=pts[Math.max(0,i-1)],b=pts[i],c=pts[Math.min(pts.length-1,i+1)];
-            const dx=c[0]-a[0],dy=c[1]-a[1],len=Math.hypot(dx,dy)||1,h=half(i),nx=-dy/len,ny=dx/len;
-            L.push([b[0]+nx*h,b[1]+ny*h]);R.push([b[0]-nx*h,b[1]-ny*h]);}
+          const dense=[[pts[0][0],pts[0][1],half(0)]];
+          for(let i=0;i<pts.length-1;i++){const p0=pts[i-1]||pts[i],p1=pts[i],p2=pts[i+1],p3=pts[i+2]||p2,h0=half(i),h1=half(i+1);
+            const n=Math.max(1,Math.min(80,Math.ceil(Math.hypot(p2[0]-p1[0],p2[1]-p1[1])/Math.max(.9,(h0+h1)*.85))));
+            for(let j=1;j<=n;j++){const t=j/n,t2=t*t,t3=t2*t,f=(a,b,c,d)=>0.5*(2*b+(-a+c)*t+(2*a-5*b+4*c-d)*t2+(-a+3*b-3*c+d)*t3);
+              dense.push([f(p0[0],p1[0],p2[0],p3[0]),f(p0[1],p1[1],p2[1],p3[1]),h0+(h1-h0)*t]);}}
+          const L=[],R=[];for(let i=0;i<dense.length;i++){const a=dense[Math.max(0,i-1)],b=dense[i],c=dense[Math.min(dense.length-1,i+1)];
+            const dx=c[0]-a[0],dy=c[1]-a[1],len=Math.hypot(dx,dy)||1,nx=-dy/len,ny=dx/len;
+            L.push([b[0]+nx*b[2],b[1]+ny*b[2]]);R.push([b[0]-nx*b[2],b[1]-ny*b[2]]);}
           ctx.beginPath();L.forEach((q,i)=>i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]));
           for(let i=R.length-1;i>=0;i--)ctx.lineTo(R[i][0],R[i][1]);
-          ctx.closePath();ctx.fillStyle=color;ctx.fill();return;}
+          ctx.closePath();ctx.fillStyle=color;ctx.fill();
+          // Round caps keep short dabs and stroke ends from looking chopped.
+          const end=dense[dense.length-1];
+          ctx.beginPath();ctx.arc(pts[0][0],pts[0][1],Math.max(.4,half(0)),0,Math.PI*2);ctx.fill();
+          ctx.beginPath();ctx.arc(end[0],end[1],Math.max(.4,end[2]),0,Math.PI*2);ctx.fill();
+          return;}
         ctx.strokeStyle=color;ctx.lineJoin='round';ctx.lineCap='round';ctx.setLineDash([]);
+        // Shape fragments keep their original straight edges; freehand strokes still get the smoothing pass.
+        const trace=()=>{if(sharp){ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));}else traceStroke(ctx,pts);};
         if(pk==='pencil'){ctx.globalAlpha=.72;ctx.lineWidth=Math.max(.6,w*.85);
-          ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.stroke();
+          trace();ctx.stroke();
           for(let i=0;i<pts.length;i++){const r=(i*9301+49297)%233280/233280,jr=((i*233280+49297)%9301)/9301;
             if(r<.45)continue;const p=pts[i],ang=(i*2.39996)%(Math.PI*2),dist=(.4+jr)*w*.6;
             ctx.globalAlpha=.16+.26*jr;ctx.fillStyle=color;ctx.beginPath();
@@ -284,7 +528,7 @@ window.__ModuleLoader__.load({
         if(pk==='marker'){ctx.globalAlpha=.5;ctx.lineWidth=w*1.9;}
         else if(pk==='watercolor'){ctx.globalAlpha=.3;ctx.lineWidth=w*2.1;ctx.shadowBlur=Math.max(4,w*1.6);ctx.shadowColor=color;}
         else{ctx.lineWidth=w;}
-        ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.stroke();
+        trace();ctx.stroke();
         ctx.globalAlpha=1;ctx.shadowBlur=0;};
       const drawEl=(ctx,e,st,ink)=>{if(e.kind==='group')return;const r=rectWith(e,st.gesture),or=e.rect,stroke=typeof e.stroke==='string'?e.stroke:st.color;
         const rot=((Number(e.rotation)||0)+((st.gesture?.kind==='rotate'&&st.gesture.ids?.includes(e.id))?st.gesture.angle:0))*Math.PI/180;
@@ -293,7 +537,11 @@ window.__ModuleLoader__.load({
         if(e.kind==='path'){if(!e.points?.length)return;
           const pts=e.points.map(p=>[r[0]+p[0]*(or[2]?r[2]/or[2]:1),r[1]+p[1]*(or[3]?r[3]/or[3]:1)]);
           if(e.fill&&e.fill!=='none'){ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.fillStyle=e.fill;ctx.fill();}
-          strokePath(ctx,pts,e.strokeWidth||2,e.pen||'plain',stroke);}
+          strokePath(ctx,pts,e.strokeWidth||2,e.pen||'plain',stroke,e.pressures,e.sharp||(e.kind==='path'&&!e.pen&&!e.semi));}
+        else if(e.kind==='image'){const item=e.src?imageEntry(e.src):null;
+          if(item?.img)ctx.drawImage(item.img,r[0],r[1],r[2],r[3]);
+          else{ctx.save();ctx.fillStyle='#e9ede8';ctx.strokeStyle='#b6c2b8';ctx.lineWidth=1;ctx.setLineDash([5,4]);ctx.fillRect(r[0],r[1],r[2],r[3]);ctx.strokeRect(r[0],r[1],r[2],r[3]);ctx.setLineDash([]);
+            const label=t(item?.failed?'Image unavailable':'Loading…');ctx.fillStyle='#7c8a80';ctx.font=`${Math.max(9,Math.min(14,Math.min(r[2],r[3])/3))}px system-ui,sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(label,r[0]+r[2]/2,r[1]+r[3]/2);ctx.textAlign='start';ctx.textBaseline='alphabetic';ctx.restore();}}
         else if(e.kind==='ellipse'||e.kind==='circle'){ctx.beginPath();ctx.ellipse(r[0]+r[2]/2,r[1]+r[3]/2,Math.max(.5,r[2]/2),Math.max(.5,r[3]/2),0,0,Math.PI*2);if(e.fill&&e.fill!=='none'){ctx.fillStyle=e.fill;ctx.fill();}ctx.stroke();}
         else if(e.kind==='arrow'){const p=e.points||[[0,0],[or[2],or[3]]],pts=p.map(q=>[r[0]+q[0]*(or[2]?r[2]/or[2]:1),r[1]+q[1]*(or[3]?r[3]/or[3]:1)]);
           ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);ctx.lineTo(pts[1][0],pts[1][1]);ctx.stroke();
@@ -319,37 +567,60 @@ window.__ModuleLoader__.load({
         for(const e of (doc2.elements||[]).filter(x=>!x.parent))walk(e);};
       const drawPreview=(ctx,st)=>{const g=st.gesture;if(!g)return;const v=st.view;
         if(g.points){
-          if(g.kind==='erase'){ctx.beginPath();g.points.forEach((p,i)=>{if(i)ctx.lineTo(p[0],p[1]);else ctx.moveTo(p[0],p[1]);});ctx.strokeStyle='rgba(175,59,59,.28)';ctx.lineWidth=st.radius*2;ctx.setLineDash([]);ctx.stroke();return;}
-          if(g.kind==='pen'){strokePath(ctx,g.points,st.width,st.penKind||'plain',st.color);return;}
+          if(g.kind==='erase'){
+            const z=v.z||1,rr=st.radius/z,last=g.points[g.points.length-1];
+            ctx.beginPath();g.points.forEach((p,i)=>{if(i)ctx.lineTo(p[0],p[1]);else ctx.moveTo(p[0],p[1]);});
+            ctx.strokeStyle='rgba(175,59,59,.28)';ctx.lineWidth=rr*2;ctx.setLineDash([]);ctx.stroke();
+            // Whole-stroke mode: outline every element the trail has already touched, so the target is visible before release.
+            if(eraseWhole){const ids=descendants(eraserHits(g.points));
+              for(const e of (st.doc?.elements||[])){
+                if(e.kind==='group'||!ids.has(e.id))continue;
+                const r=rectWith(e,st.gesture);ctx.strokeStyle='rgba(175,59,59,.8)';ctx.lineWidth=1.2/z;ctx.setLineDash([5/z,3/z]);
+                ctx.strokeRect(r[0]-2/z,r[1]-2/z,r[2]+4/z,r[3]+4/z);}
+              ctx.setLineDash([]);}
+            // Keep the tool radius visible while the stroke is in progress.
+            ctx.beginPath();ctx.arc(last[0],last[1],rr,0,Math.PI*2);ctx.strokeStyle='rgba(53,108,89,.75)';ctx.lineWidth=1/z;ctx.setLineDash([4/z,3/z]);ctx.stroke();ctx.setLineDash([]);
+            return;
+          }
+          if(g.kind==='pen'){strokePath(ctx,g.points,st.width,st.penKind||'plain',st.color,g.pressures);return;}
           ctx.beginPath();g.points.forEach((p,i)=>{if(i)ctx.lineTo(p[0],p[1]);else ctx.moveTo(p[0],p[1]);});ctx.strokeStyle=st.color;ctx.lineWidth=1/v.z;ctx.setLineDash([4/v.z,4/v.z]);ctx.stroke();ctx.setLineDash([]);return;}
         if(['rect','ellipse','arrow','box','semi'].includes(g.kind)){const r=normalize(g.start,g.end);
-          ctx.strokeStyle=g.kind==='box'?'#356c59':st.color;ctx.lineWidth=st.width;ctx.setLineDash(g.kind==='box'?[5,4]:[]);
+          ctx.strokeStyle=g.kind==='box'?'#356c59':st.color;
+          // The marquee is viewport chrome, not a shape: keep it 1 screen pixel and independent of the last border width.
+          ctx.lineWidth=g.kind==='box'?1/(st.view.z||1):st.width;
+          ctx.setLineDash(g.kind==='box'?[5/(st.view.z||1),4/(st.view.z||1)]:[]);
           if(g.kind==='ellipse'){ctx.beginPath();ctx.ellipse(r[0]+r[2]/2,r[1]+r[3]/2,Math.max(.5,r[2]/2),Math.max(.5,r[3]/2),0,0,Math.PI*2);ctx.stroke();}
           else if(g.kind==='semi'){ctx.beginPath();ctx.ellipse(r[0]+r[2]/2,r[1]+r[3],Math.max(.5,r[2]/2),Math.max(.5,r[3]),0,Math.PI,Math.PI*2);ctx.stroke();}
           else if(g.kind==='arrow'){ctx.beginPath();ctx.moveTo(g.start[0],g.start[1]);ctx.lineTo(g.end[0],g.end[1]);ctx.stroke();}
           else ctx.strokeRect(r[0],r[1],r[2],r[3]);ctx.setLineDash([]);}};
-      const paint=()=>{const cv=svg.current;if(!cv||typeof cv.getContext!=='function')return;const ctx=cv.getContext('2d');if(!ctx)return;const st=live.current;
-        const dpr=globalThis.devicePixelRatio||1,w=cv.clientWidth||1,h2=cv.clientHeight||1;
-        if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h2*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h2*dpr);}
-        let bg='#f5f5f2',line='#d9ded9',ink='#26382d';
+      const layerSize=cv=>{const dpr=globalThis.devicePixelRatio||1,w=cv.clientWidth||1,h2=cv.clientHeight||1;return {dpr,w,h2,bw:Math.round(w*dpr),bh:Math.round(h2*dpr)};};
+      const themeOf=cv=>{let bg='#f5f5f2',line='#d9ded9',ink='#26382d';
         if(typeof getComputedStyle==='function'){const css=getComputedStyle(cv);bg=css.getPropertyValue('--ic-bg').trim()||bg;line=css.getPropertyValue('--ic-line').trim()||line;ink=css.getPropertyValue('--dsw-alias-label-primary').trim()||ink;}
+        return {bg,line,ink};};
+      // The committed scene is its own bitmap: gesture frames clear only the overlay and never touch this layer.
+      const paintScene=(force=false)=>{const cv=sceneRef.current;if(!cv||typeof cv.getContext!=='function')return;const ctx=cv.getContext('2d');if(!ctx)return;const st=live.current,{dpr,w,h2,bw,bh}=layerSize(cv);
+        const {bg,ink}=themeOf(cv);
+        const key=[bw,bh,bg,ink,st.docId,st.doc?.version,st.doc?.elements?.length,st.view.x,st.view.y,st.view.z,st.grid?1:0,st.gesture?1:0].join('|');
+        if(!force&&painted.current.scene===key)return;
+        painted.current.scene=key;
+        if(cv.width!==bw||cv.height!==bh){cv.width=bw;cv.height=bh;}
         ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h2);ctx.fillStyle=bg;ctx.fillRect(0,0,w,h2);
         const v=st.view;
         if(st.grid){const step=24*v.z,r=Math.max(.9,Math.min(1.7,step*.06));
           ctx.save();ctx.globalAlpha=.22;ctx.fillStyle=ink;
           for(let x=v.x%step;x<w;x+=step)for(let y=v.y%step;y<h2;y+=step){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();}
           ctx.restore();}
+        ctx.save();ctx.translate(v.x,v.y);ctx.scale(v.z,v.z);drawScene(ctx,st.doc||{elements:[]},st,ink);ctx.restore();};
+      const paintOverlay=(force=false)=>{const cv=svg.current;if(!cv||typeof cv.getContext!=='function')return;const ctx=cv.getContext('2d');if(!ctx)return;const st=live.current,{dpr,w,h2,bw,bh}=layerSize(cv);
+        const {line,ink,bg}=themeOf(cv);
+        const key=[bw,bh,bg,line,ink,st.docId,st.doc?.version,st.doc?.elements?.length,st.view.x,st.view.y,st.view.z,st.tool,st.badges?1:0,(st.selection||[]).join(','),st.color,st.width,st.radius,st.penKind,st.gesture?1:0,st.editor?1:0,hoverRef.current?1:0].join('|');
+        if(!force&&painted.current.overlay===key)return;
+        painted.current.overlay=key;
+        if(cv.width!==bw||cv.height!==bh){cv.width=bw;cv.height=bh;}
+        ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h2);
+        const v=st.view;
         ctx.save();ctx.translate(v.x,v.y);ctx.scale(v.z,v.z);
-        drawScene(ctx,st.doc||{elements:[]},st,ink);
         drawPreview(ctx,st);
-        const sel=st.selection||[];
-        if(sel.length){const chosen=(st.doc?.elements||[]).filter(e=>sel.includes(e.id));
-          if(chosen.length){const r=bounds(chosen.map(e=>({...e,rect:rectWith(e,st.gesture)})));ctx.strokeStyle='#356c59';ctx.lineWidth=1/v.z;ctx.setLineDash([]);
-            const ang=chosen.length===1?(Number(chosen[0].rotation)||0)*Math.PI/180:0;
-            if(ang){const box=[r[0]-4/v.z,r[1]-4/v.z,r[2]+8/v.z,r[3]+8/v.z],c=[box[0]+box[2]/2,box[1]+box[3]/2];
-              const cs=[[box[0],box[1]],[box[0]+box[2],box[1]],[box[0]+box[2],box[1]+box[3]],[box[0],box[1]+box[3]]].map(p=>rotPoint(p,c,ang));
-              ctx.beginPath();cs.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();ctx.stroke();}
-            else ctx.strokeRect(r[0]-4/v.z,r[1]-4/v.z,r[2]+8/v.z,r[3]+8/v.z);}}
         // Eraser pointer: the native cursor is hidden while erasing, so the tool draws its own glyph and radius.
         const hv=hoverRef.current;
         if(st.tool==='erase'&&hv&&!st.gesture){const rr=st.radius/v.z;
@@ -362,6 +633,7 @@ window.__ModuleLoader__.load({
           ctx.fillStyle='rgba(255,255,255,.9)';ctx.fillRect(-ew/2+0.5/v.z,-eh/2+0.5/v.z,ew*0.32,eh-1/v.z);
           ctx.restore();}
         ctx.restore();
+        drawSelectionChrome(ctx,st,bg);
         // Number badges: a translucent ordinal at each element's top-left corner, so a conversation can say "图元 3".
         const leaves=st.badges===false?[]:(st.doc?.elements||[]).filter(e=>e.kind!=='group');
         if(leaves.length){ctx.save();ctx.font='600 10px system-ui,sans-serif';ctx.textBaseline='middle';ctx.textAlign='left';
@@ -383,27 +655,20 @@ window.__ModuleLoader__.load({
           ctx.fillStyle=ink;ctx.font='600 22px system-ui,sans-serif';ctx.fillText(t('Draw a thought.'),w/2,h2/2-14,Math.max(80,w-40));
           ctx.fillStyle=line;ctx.font='13px system-ui,sans-serif';ctx.fillText(t('Use the pen, add a note, or select a shape. AI and human edits share this document.'),w/2,h2/2+18,Math.max(80,w-40));
           ctx.textAlign='start';ctx.textBaseline='alphabetic';}};
+      const paint=(force=false,scope='all')=>{if(scope==='overlay'){paintOverlay(force);return;}paintScene(force);paintOverlay(force);};
       paintRef.current=paint;
       useEffect(()=>{paint();});
       const button=(label,onClick,props={})=>{const {icon,...rest}=props;return h('button',{type:'button',onClick,title:t(label),'aria-label':t(label),...rest},icon||t(label));};
       const consultChoice=async choice=>{const c=consult;if(!c)return;if(choice==='ignore'){setConsult(null);return;}let ops;if(choice==='card'&&c.id)ops=[{type:'promote',id:c.id,to:'card',approved:true}];else if(choice==='group'&&c.ids.length>1)ops=[{type:'group',ids:c.ids,groupId:uid()}];else return;if(await commit(ops))setConsult(null);};
-      const selBox=selectionBounds?bounds(selected.map(e=>({...e,rect:visualRect(e)}))):null;
-      // Handles follow the element's own rotation, plus a rotate handle above the top edge.
-      const selAngle=selBox&&selected.length===1?(Number(selected[0].rotation)||0)*Math.PI/180:0;
-      const selC=selBox?[selBox[0]+selBox[2]/2,selBox[1]+selBox[3]/2]:null;
-      // The rotate handle anchors to the axis-aligned box of the rotated shape, so it stays above the shape.
-      const rotBox=selBox&&selAngle?(()=>{const cs=[[selBox[0],selBox[1]],[selBox[0]+selBox[2],selBox[1]],[selBox[0]+selBox[2],selBox[1]+selBox[3]],[selBox[0],selBox[1]+selBox[3]]].map(p=>rotPoint(p,selC,selAngle));
-        const xs=cs.map(p=>p[0]),ys=cs.map(p=>p[1]),x0=Math.min(...xs),y0=Math.min(...ys);
-        return [x0,y0,Math.max(...xs)-x0,Math.max(...ys)-y0];})():selBox;
-      const handleList=selBox?[
-        ...[['nw',0,0],['n',.5,0],['ne',1,0],['e',1,.5],['se',1,1],['s',.5,1],['sw',0,1],['w',0,.5]].map(([hd,fx,fy])=>({hd,x:selBox[0]+selBox[2]*fx,y:selBox[1]+selBox[3]*fy})),
-        {hd:'rotate',x:rotBox[0]+rotBox[2]/2,y:Math.max(rotBox[1]-22/view.z,(6-view.y)/view.z)}].map(h=>{if(!selAngle||h.hd==='rotate')return h;const p=rotPoint([h.x,h.y],selC,selAngle);return {hd:h.hd,x:p[0],y:p[1]};}):[];
-      const tools={select:'Select',pan:'Pan',pen:'Pen',erase:'Erase',text:'Text',rect:'Rectangle',ellipse:'Ellipse',arrow:'Arrow',note:'Note',lasso:'Lasso',semi:'Semicircle'};
-      const primaryTools=['select','pan','pen','erase','text'],extraTools=['rect','ellipse','arrow','note','lasso','semi'];
+      const tools={select:'Select',pan:'Pan',pen:'Pen',erase:'Erase',text:'Text',rect:'Rectangle',ellipse:'Ellipse',semi:'Semicircle',arrow:'Arrow',note:'Note',lasso:'Lasso'};
+      const primaryTools=['select','pan','pen','erase','text'],extraTools=['rect','ellipse','semi','arrow','note','lasso'];
       const toolButton=(k,extra)=>button(tools[k],()=>chooseTool(k),{key:k,'aria-pressed':tool===k,className:extra?'ic-tool-extra':undefined,icon:h(ToolIcon,{kind:k,size:20}),onMouseEnter:hover(k,tools[k]),onFocus:hover(k,tools[k]),onBlur:()=>setTip(null)});
+      // Images decode asynchronously; export/copy waits so a just-pasted bitmap is never missing from the PNG.
+      const loadImages=els=>Promise.all((els||[]).filter(e=>e.kind==='image'&&typeof e.src==='string').map(e=>imageEntry(e.src).promise));
       // Export the content bounding box as a 2x PNG without touching the document.
-      const exportPng=(clear=false)=>{const st=live.current,d=st.doc;if(!d||typeof document==='undefined')return;
+      const exportPng=async(clear=false)=>{const st=live.current,d=st.doc;if(!d||typeof document==='undefined')return;
         const roots=(d.elements||[]).filter(e=>e.kind!=='group');if(!roots.length)return;
+        await loadImages(roots);
         const b=bounds(roots.map(e=>({rect:e.rect})));const pad=24,scale=2;
         const w=Math.max(1,Math.ceil((b[2]+pad*2)*scale)),hh=Math.max(1,Math.ceil((b[3]+pad*2)*scale));
         const cv=document.createElement('canvas');cv.width=w;cv.height=hh;const ctx=cv.getContext('2d');if(!ctx)return;
@@ -413,16 +678,17 @@ window.__ModuleLoader__.load({
         drawScene(ctx,d,shot,'#26382d');
         const a=document.createElement('a');a.href=cv.toDataURL('image/png');a.download=`${d.id}-v${d.version}${clear?'-clear':''}.png`;a.click();};
       // Render a subset to a PNG blob so a copy can be pasted into other whiteboards as an image.
-      const renderBlob=(els,scale=2)=>new Promise((resolve,reject)=>{
-        if(typeof document==='undefined')return reject(new Error(t('No document')));
-        const roots=els.filter(e=>e.kind!=='group');if(!roots.length)return reject(new Error(t('Nothing to copy')));
+      const renderBlob=async(els,scale=2)=>{
+        if(typeof document==='undefined')throw new Error(t('No document'));
+        const roots=els.filter(e=>e.kind!=='group');if(!roots.length)throw new Error(t('Nothing to copy'));
+        await loadImages(roots);
         const b=bounds(roots.map(e=>({rect:e.rect}))),pad=24;
         const cv=document.createElement('canvas');cv.width=Math.max(1,Math.ceil((b[2]+pad*2)*scale));cv.height=Math.max(1,Math.ceil((b[3]+pad*2)*scale));
-        const c2=cv.getContext('2d');if(!c2)return reject(new Error(t('Canvas unavailable')));
+        const c2=cv.getContext('2d');if(!c2)throw new Error(t('Canvas unavailable'));
         c2.fillStyle='#ffffff';c2.fillRect(0,0,cv.width,cv.height);c2.scale(scale,scale);c2.translate(pad-b[0],pad-b[1]);
         const shot={doc:{elements:els},gesture:null,view:{x:0,y:0,z:1},color,width,radius,grid:false,selection:[]};
         drawScene(c2,{elements:els},shot,'#26382d');
-        cv.toBlob(blob=>blob?resolve(blob):reject(new Error(t('PNG encode failed'))),'image/png');});
+        return new Promise((resolve,reject)=>cv.toBlob(blob=>blob?resolve(blob):reject(new Error(t('PNG encode failed'))),'image/png'));};
       const copyToSystem=async els=>{try{
           if(!els.length)return;
           const payload=JSON.stringify({intentCanvas:1,elements:els});
@@ -432,29 +698,43 @@ window.__ModuleLoader__.load({
           else throw new Error(t('Clipboard unavailable'));
           toast.push(t('Copied — paste it in any board'));
         }catch(e){report(e);}};
-      const pasteAt=async(wx,wy)=>{try{
+      const pasteImage=async(blob,wx,wy,centered=false)=>{try{
+          const {src,w,h}=await prepareImage(await readAsDataUrl(blob));
+          const scale=Math.min(1,IMAGE_WORLD_MAX/Math.max(w,h,1)),rw=Math.max(24,Math.round(w*scale)),rh=Math.max(24,Math.round(h*scale)),id=uid();
+          const element={id,kind:'image',rect:[centered?wx-rw/2:wx,centered?wy-rh/2:wy,rw,rh],src};
+          if(await commit([{type:'create',element}])){setSelection([id]);toast.push(t('Pasted image into the canvas'));}
+        }catch(e){toast.push(t(e?.message==='IMAGE_TOO_LARGE'?'Image is too large':'Image could not be pasted'));}};
+      const pasteAt=async(wx,wy,centered=false)=>{try{
           if(!navigator.clipboard?.read)throw new Error(t('Clipboard read unavailable'));
-          let payload=null,sawImage=false;
+          let payload=null,blob=null;
           for(const item of await navigator.clipboard.read()){
-            if(item.types.some(k=>k.startsWith('image/')))sawImage=true;
+            if(!blob&&item.types.some(k=>k.startsWith('image/'))){const type=item.types.find(k=>k.startsWith('image/'));blob=await item.getType(type);}
             if(item.types.includes('text/plain')){
               try{const parsed=JSON.parse(await (await item.getType('text/plain')).text());if(parsed&&parsed.intentCanvas===1&&Array.isArray(parsed.elements))payload=parsed;}catch(e){}
             }
           }
-          if(!payload){toast.push(sawImage?(t('Images cannot be pasted yet')):(t('Clipboard has no canvas content')));return;}
-          const roots=payload.elements.filter(e=>e.kind!=='group');if(!roots.length)return;
-          const b=bounds(roots.map(e=>({rect:e.rect})));
-          if(await commit([{type:'paste',elements:payload.elements,dx:wx-b[0],dy:wy-b[1]}]))toast.push(t('Pasted into the canvas'));
+          if(payload){const roots=payload.elements.filter(e=>e.kind!=='group');if(!roots.length)return;const b=bounds(roots.map(e=>({rect:e.rect})));
+            if(await commit([{type:'paste',elements:payload.elements,dx:wx-b[0],dy:wy-b[1]}]))toast.push(t('Pasted into the canvas'));return;}
+          if(blob){await pasteImage(blob,wx,wy,centered);return;}
+          toast.push(t('Clipboard has no canvas content'));
         }catch(e){report(e);}};
+      // Ctrl/⌘+V keeps the in-canvas clipboard fast, then falls back to the system clipboard so screenshots can be pasted.
+      const pasteFromSystem=()=>{const cv=svg.current;if(!cv)return;if(clipboard.current){action('paste');return;}
+        const v=live.current.view;void pasteAt((cv.clientWidth/2-v.x)/v.z,(cv.clientHeight/2-v.y)/v.z,true);};
       const openMenu=e=>{e.preventDefault();if(!doc)return;const r=svg.current.getBoundingClientRect();
-        const lx=e.clientX-r.left,ly=e.clientY-r.top;setMenu({x:lx,y:ly,wx:(lx-view.x)/view.z,wy:(ly-view.y)/view.z});};
+        const lx=e.clientX-r.left,ly=e.clientY-r.top,v=live.current.view,wx=(lx-v.x)/v.z,wy=(ly-v.y)/v.z;
+        // Right-clicking an unselected element selects it first, so Group/Ungroup always act on what was clicked.
+        const hit=pick([wx,wy]);if(hit&&!selection.includes(hit.id))setSelection([hit.id]);
+        // Keep the taller group menu inside the workspace instead of clipping its last items.
+        const x=Math.max(4,Math.min(lx,(svg.current.clientWidth||1)-168)),y=Math.max(4,Math.min(ly,(svg.current.clientHeight||1)-300));
+        setMenu({x,y,wx,wy});};
       useEffect(()=>{if(!menu)return;const close=ev=>{if(!ev.target?.closest?.('.ic-ctx'))setMenu(null);};window.addEventListener('pointerdown',close,true);return()=>window.removeEventListener('pointerdown',close,true);},[menu]);
-      useEffect(()=>{if(!selMore)return;const close=ev=>{if(!ev.target?.closest?.('.ic-sel'))setSelMore(false);};window.addEventListener('pointerdown',close,true);return()=>window.removeEventListener('pointerdown',close,true);},[selMore]);
+      useEffect(()=>{if(!selMore)return;const close=ev=>{if(!ev.target?.closest?.('.ic-more-wrap'))setSelMore(false);};window.addEventListener('pointerdown',close,true);return()=>window.removeEventListener('pointerdown',close,true);},[selMore]);
       useEffect(()=>{if(!penPanel)return;const close=ev=>{if(!ev.target?.closest?.('.ic-sel'))setPenPanel(null);};window.addEventListener('pointerdown',close,true);return()=>window.removeEventListener('pointerdown',close,true);},[penPanel]);
       useEffect(()=>{if(!selection.length)setSelMore(false);},[selection.length]);
       const keys={select:'V',pan:'H',pen:'P',erase:'E',text:'T',rect:'R',ellipse:'O',arrow:'A',note:'N',lasso:'L'};
       const hover=(k,label)=>e=>{const el=e.currentTarget;setTip({text:keys[k]?`${t(label)} · ${keys[k]}`:t(label),x:el.offsetLeft+el.offsetWidth/2,y:el.offsetTop+el.offsetHeight/2,rail:!!(el.closest&&el.closest('.ic-rail'))});};
-      const zoomPct=h('span',{className:'ic-chip','aria-live':'polite'},Math.round(view.z*100)+'%');
+      const zoomPct=h('span',{ref:zoomLabel,className:'ic-chip','aria-live':'polite'},Math.round(viewRef.current.z*100)+'%');
       const colorCard=(setter,current,after)=>h('div',{className:'ic-pen-card ic-swatches',role:'menu','aria-label':t('Color')},
         ...['#000000','#4b4b4b','#b8bcc0','#ffffff','#e03131','#f08c00','#f59f00','#fab005','#74b816','#2f9e44','#0ca678','#12b886','#1971c2','#4263eb','#7048e8','#ae3ec9','#e64980'].map(c=>h('button',{key:c,type:'button',className:'ic-swatch',style:{background:c},onClick:()=>{setter(c);if(after)after(c);setPenPanel(null);},'aria-label':c,title:c})),
         h('label',{className:'ic-swatch ic-swatch-custom',title:t('Custom color')},
@@ -462,29 +742,47 @@ window.__ModuleLoader__.load({
       // Style edits in the secondary bar also apply to the current selection, not just the next shape.
       const applySel=patch=>{if(!selection.length||!doc)return;const ids=[...descendants(selection)].filter(id=>{const e=doc.elements.find(x=>x.id===id);return e&&e.kind!=='group';});if(!ids.length)return;commit(ids.map(id=>({type:'update',id,patch})));};
       const styleLater=patch=>{if(!selection.length)return;if(styleTimer.current)clearTimeout(styleTimer.current);styleTimer.current=setTimeout(()=>{styleTimer.current=0;applySel(patch);},150);};
-      const selStyled=(doc?.elements||[]).filter(e=>selection.includes(e.id)&&['rect','ellipse','semi','arrow','note','text'].includes(e.kind));
-      const selHasShape=selStyled.some(e=>['rect','ellipse','semi'].includes(e.kind)),selLine=selStyled.some(e=>e.kind==='arrow'),selNote=selStyled.some(e=>e.kind==='note'),selText=selStyled.some(e=>e.kind==='text');
-      const strokeBar=['rect','ellipse','semi','arrow','note'].includes(tool)||(tool==='select'&&(selHasShape||selLine||selNote));
+      // The semicircle tool stores a half disc as a 33-point path; treat it as a shape so border/fill stay editable.
+      const isSemiShape=e=>!!e&&(e.semi===true||(e.kind==='path'&&e.points?.length===33&&Array.isArray(e.rect)&&(()=>{const p=e.points,w=e.rect[2],h=e.rect[3],eq=(a,b)=>Math.abs(a-b)<=Math.max(1,Math.max(w,h)*.02);return eq(p[0][0],0)&&eq(p[0][1],h)&&eq(p[32][0],w)&&eq(p[32][1],h)&&eq(p[16][0],w/2)&&eq(p[16][1],0);})()));
+      // Freehand strokes and other path-based marks still expose stroke colour/width when selected, but never fill.
+      const isStrokePath=e=>e?.kind==='path'&&!isSemiShape(e)&&typeof e.stroke==='string';
+      const selStyled=(doc?.elements||[]).filter(e=>selection.includes(e.id)&&(['rect','ellipse','semi','arrow','note','text'].includes(e.kind)||isSemiShape(e)||isStrokePath(e)));
+      // Editing a selected shape must not rewrite the defaults used by the next shape: each keeps its own style.
+      const editSel=tool!=='pen'&&tool!=='erase'&&selStyled.length>0,styleEl=editSel?selStyled[0]:null;
+      const dColor=styleEl&&typeof styleEl.stroke==='string'?styleEl.stroke:color;
+      const dWidth=styleEl&&Number.isFinite(Number(styleEl.strokeWidth))?Number(styleEl.strokeWidth):width;
+      const dFillOn=styleEl?!!(styleEl.fill&&styleEl.fill!=='none'):fillOn;
+      const dFill=styleEl&&dFillOn?styleEl.fill:fillColor;
+      const dNoteFill=styleEl&&styleEl.kind==='note'&&dFillOn?styleEl.fill:noteFill;
+      const dFontSize=styleEl&&styleEl.fontSize?styleEl.fontSize:fontSize;
+      const dTextColor=styleEl&&styleEl.textColor?styleEl.textColor:textColor;
+      const canGroup=!!doc&&roots(selection).length>=2,canUngroup=!!doc&&selected.some(e=>e.kind==='group');
+      const selHasShape=selStyled.some(e=>['rect','ellipse','semi'].includes(e.kind)||isSemiShape(e)),selLine=selStyled.some(e=>e.kind==='arrow'),selNote=selStyled.some(e=>e.kind==='note'),selText=selStyled.some(e=>e.kind==='text'),selStrokePath=selStyled.some(isStrokePath);
+      const strokeBar=['rect','ellipse','semi','arrow','note'].includes(tool)||(tool==='select'&&(selHasShape||selLine||selNote||selStrokePath));
       const textBar=tool==='text'||(tool==='select'&&selText);
       const fillBar=strokeBar&&(selHasShape||['rect','ellipse','semi'].includes(tool));
       const noteBar=tool==='note'||(tool==='select'&&selNote);
+      // The text editor keeps its own viewport snapshot so panning/zooming the scene never rewrites the DOM box.
+      const eview=editor?.view||live.current.view;
       return h('section',{className:'ic-app',ref:root,tabIndex:0,onKeyDown:keyDown,'aria-label':t('Canvas')},
-        h('div',{className:'ic-workspace'},h('canvas',{ref:svg,className:'ic-canvas','aria-label':t('Canvas'),role:'img',onPointerDown:pointerDown,onPointerMove:pointerMove,onPointerUp:pointerUp,onPointerLeave:()=>{hoverRef.current=null;queuePaint();},onContextMenu:openMenu,onPointerCancel:()=>{live.current.gesture=null;if(handleLayer.current)handleLayer.current.style.display='';paintRef.current&&paintRef.current();},onDoubleClick:e=>{if(!doc||busy)return;const p=world(e),hit=pick(p);if(hit)beginEditor(hit,p);},onWheel:e=>{if(editor)return;const r=svg.current.getBoundingClientRect();zoom(Math.exp(-e.deltaY*.0015),[e.clientX-r.left,e.clientY-r.top]);},style:{cursor:rotateMode&&selection.length?'grab':tool==='erase'?'none':tool==='pan'?'grab':tool==='select'?'default':'crosshair'}}),
-          h('div',{className:'ic-handles',ref:handleLayer,onPointerDown:pointerDown,onPointerMove:pointerMove,onPointerUp:pointerUp,onPointerCancel:()=>{live.current.gesture=null;if(handleLayer.current)handleLayer.current.style.opacity='';paintRef.current&&paintRef.current();}},...handleList.map(({hd,x,y})=>h('div',{key:hd,className:hd==='rotate'?'ic-handle-rotate':'ic-handle','data-rotate':hd==='rotate'?'1':undefined,'data-resize':hd==='rotate'?undefined:hd,style:{left:x*view.z+view.x-(hd==='rotate'?7:5),top:y*view.z+view.y-(hd==='rotate'?7:5),cursor:hd==='rotate'?'grab':cursorOf(hd)}}))),
+        h('div',{className:'ic-workspace'},h('canvas',{ref:sceneRef,className:'ic-canvas ic-scene','aria-hidden':'true'}),h('canvas',{ref:svg,className:'ic-canvas ic-overlay','aria-label':t('Canvas'),role:'img',onPointerDown:pointerDown,onPointerMove:pointerMove,onPointerUp:pointerUp,onPointerLeave:()=>{hoverRef.current=null;queuePaint('overlay');},onContextMenu:openMenu,onPointerCancel:()=>{live.current.gesture=null;paintRef.current&&paintRef.current();},onDoubleClick:e=>{if(!doc||busy)return;const p=world(e),hit=pick(p);if(hit&&hit.kind!=='image')beginEditor(hit,p);},onWheel:e=>{if(editor)return;const r=svg.current.getBoundingClientRect();zoom(Math.exp(-e.deltaY*.0015),[e.clientX-r.left,e.clientY-r.top]);},style:{cursor:rotateMode&&selection.length?'grab':tool==='erase'?'none':tool==='pan'?'grab':tool==='select'?'default':'crosshair'}}),
           menu&&h('div',{className:'ic-ctx',role:'menu',style:{left:menu.x,top:menu.y},onPointerDown:e=>e.stopPropagation()},
             h('button',{type:'button',role:'menuitem',onClick:()=>{const els=selection.length?doc.elements.filter(e=>descendants(roots(selection)).has(e.id)):doc.elements;copyToSystem(els);setMenu(null);}},selection.length?`${t('Copy')} (${selection.length})`:t('Copy all')),
             h('button',{type:'button',role:'menuitem',onClick:()=>{const m=menu;setMenu(null);pasteAt(m.wx,m.wy);}},t('Paste')),
+            h('button',{type:'button',role:'menuitem',disabled:!canGroup,onClick:()=>{setMenu(null);action('group');}},t('Group')),
+            h('button',{type:'button',role:'menuitem',disabled:!canUngroup,onClick:()=>{setMenu(null);action('ungroup');}},t('Ungroup')),
+            h('div',{className:'ic-ctx-sep'}),
             h('button',{type:'button',role:'menuitem',onClick:()=>{setMenu(null);exportPng(false);}},t('Export PNG (white)')),
             h('button',{type:'button',role:'menuitem',onClick:()=>{setMenu(null);exportPng(true);}},t('Export PNG (transparent)')),
             h('button',{type:'button',role:'menuitem',onClick:()=>setMenu(null)},t('Close'))),
-          editor&&h('div',{ref:editorRef},h('textarea',{className:'ic-editor',autoFocus:true,value:editor.text,'aria-label':t('Text content'),style:{left:editor.rect[0]*view.z+view.x,top:editor.rect[1]*view.z+view.y,width:Math.max(150,editor.rect[2]*view.z),height:Math.max(85,editor.rect[3]*view.z),fontSize:Math.max(11,(Number(editor.fontSize)||16)*view.z)+'px',color:editor.textColor||'#26382d'},onChange:e=>{const next={...live.current.editor,text:e.target.value};live.current.editor=next;setEditor(next);},onBlur:e=>{
+          editor&&h('div',{ref:editorRef},h('textarea',{className:'ic-editor',autoFocus:true,value:editor.text,'aria-label':t('Text content'),style:{left:editor.rect[0]*eview.z+eview.x,top:editor.rect[1]*eview.z+eview.y,width:Math.max(150,editor.rect[2]*eview.z),height:Math.max(85,editor.rect[3]*eview.z),fontSize:Math.max(11,(Number(editor.fontSize)||16)*eview.z)+'px',color:editor.textColor||'#26382d'},onChange:e=>{const next={...live.current.editor,text:e.target.value};live.current.editor=next;setEditor(next);},onBlur:e=>{
             // Focus moving into this editor's own controls (colour / size / buttons) must not commit and close it.
             const tgt=e?.relatedTarget;if(tgt&&editorRef.current&&editorRef.current.contains(tgt))return;
             setTimeout(()=>{const a=typeof document!=='undefined'?document.activeElement:null;if(a&&editorRef.current&&editorRef.current.contains(a))return;saveEditor();},0);},
-            onKeyDown:e=>{if(e.key==='Escape'){e.stopPropagation();live.current.editor=null;setEditor(null);}if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();saveEditor();}}}),h('div',{className:'ic-consult',style:{top:editor.rect[1]*view.z+view.y+Math.max(85,editor.rect[3]*view.z)+10,left:editor.rect[0]*view.z+view.x,right:'auto',bottom:'auto',width:'auto',maxWidth:'calc(100% - 20px)',padding:'8px 10px'}},h('div',{className:'ic-actions'},h('input',{type:'color',className:'ic-color',value:editor.textColor||'#26382d',onChange:e=>{const next={...live.current.editor,textColor:e.target.value};live.current.editor=next;setEditor(next);},'aria-label':t('Text color'),title:t('Text color')}),h('select',{'aria-label':t('Font size'),title:t('Font size'),value:Number(editor.fontSize)||16,onChange:e=>{const next={...live.current.editor,fontSize:+e.target.value};live.current.editor=next;setEditor(next);}},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),button('Save',saveEditor),button('Cancel',()=>{live.current.editor=null;setEditor(null);})))),
+            onKeyDown:e=>{if(e.key==='Escape'){e.stopPropagation();live.current.editor=null;setEditor(null);}if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();saveEditor();}}}),h('div',{className:'ic-consult',style:{top:editor.rect[1]*eview.z+eview.y+Math.max(85,editor.rect[3]*eview.z)+10,left:editor.rect[0]*eview.z+eview.x,right:'auto',bottom:'auto',width:'auto',maxWidth:'calc(100% - 20px)',padding:'8px 10px'}},h('div',{className:'ic-actions'},h('input',{type:'color',className:'ic-color',value:editor.textColor||'#26382d',onChange:e=>{const next={...live.current.editor,textColor:e.target.value};live.current.editor=next;setEditor(next);},'aria-label':t('Text color'),title:t('Text color')}),h('select',{'aria-label':t('Font size'),title:t('Font size'),value:Number(editor.fontSize)||16,onChange:e=>{const next={...live.current.editor,fontSize:+e.target.value};live.current.editor=next;setEditor(next);}},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),button('Save',saveEditor),button('Cancel',()=>{live.current.editor=null;setEditor(null);})))),
           consult&&h('aside',{className:'ic-consult','aria-label':t('What does this circle mean?')},h('h3',null,t('What does this circle mean?')),h('p',null,t('Keep it as a drawing, make a card, or group the enclosed items. Nothing converts without your choice.')),h('div',{className:'ic-actions'},consult.id&&button('Make card',()=>consultChoice('card'),{disabled:busy}),button('Group enclosed',()=>consultChoice('group'),{disabled:busy||consult.ids.length<2}),button('Keep drawing',()=>consultChoice('ignore'))))),
         h('div',{className:'ic-top'},
-          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.0.91'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();if(!busy&&!live.current.gesture&&!editor&&inputId.trim())setDocId(inputId.trim());}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document')}),button('Open',()=>{if(!busy&&!live.current.gesture&&!editor&&inputId.trim())setDocId(inputId.trim());},{disabled:busy}))),
+          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.1.12'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
           h('div',{className:'ic-float ic-tr'},button('Undo',()=>action('undo'),{disabled:busy||!doc?.history?.length}),button('Redo',()=>action('redo'),{disabled:busy||!doc?.future?.length}),button(confirmClear?'Confirm clear':'Clear canvas',clearBoard,{disabled:!doc?.elements?.length||busy,'aria-pressed':confirmClear}),button('Grid',()=>{const next=!grid;live.current.grid=next;setGrid(next);paintRef.current&&paintRef.current();},{'aria-pressed':grid}),button('Numbers',()=>{const next=!badges;live.current.badges=next;setBadges(next);paintRef.current&&paintRef.current();},{'aria-pressed':badges}),button('Fit',fit,{disabled:!doc}))),
         h('div',{className:'ic-float ic-tc ic-rail',role:'toolbar','aria-label':t('Canvas'),onMouseLeave:()=>{setTip(null);setMoreOpen(false);}},
           ...primaryTools.map(k=>toolButton(k)),
@@ -495,7 +793,7 @@ window.__ModuleLoader__.load({
             ? h(React.Fragment,null,
                 button('Delete',()=>action('delete'),{disabled:busy}),
                 button('Copy',()=>action('copy')),
-                button('Paste',()=>action('paste'),{disabled:busy}),
+                button('Paste',()=>pasteFromSystem(),{disabled:busy}),
                 h('select',{'aria-label':t('Align'),value:'',disabled:selection.length<2||busy,onChange:e=>e.target.value&&action('align',{alignment:e.target.value})},h('option',{value:''},t('Align')),...['left','center','right','top','middle','bottom'].map(x=>h('option',{key:x,value:x},t(x[0].toUpperCase()+x.slice(1))))),
                 h('div',{className:'ic-more-wrap'},
                   h('button',{type:'button',className:'ic-more',onClick:()=>setSelMore(v=>!v),title:t('More actions'),'aria-label':t('More actions'),'aria-expanded':selMore},t('More actions')),
@@ -511,7 +809,7 @@ window.__ModuleLoader__.load({
                     button('Distribute horizontally',()=>{setSelMore(false);action('distribute',{axis:'x'});},{disabled:selection.length<3||busy}),
                     button('Distribute vertically',()=>{setSelMore(false);action('distribute',{axis:'y'});},{disabled:selection.length<3||busy}))))
             : null),
-        h('div',{className:'ic-float ic-br'},aiAt>0&&h('span',{className:'ic-live',role:'status'},t('AI is editing')),h('span',{className:'ic-tipwrap'},h('button',{type:'button',className:'ic-iconbtn',onClick:exportPng,title:t('Export PNG'),'aria-label':t('Export PNG'),disabled:!doc?.elements?.length},h(ToolIcon,{kind:'image',size:18})),h('span',{className:'ic-bubble',role:'tooltip'},t('Export PNG'))),        sessionId&&h('span',{className:'ic-tipwrap'},h('button',{type:'button',className:'ic-ghost',onClick:fillComposer,title:t('Fill input'),'aria-label':t('Fill input'),disabled:!doc},h(ToolIcon,{kind:'compose',size:14}),h('span',{className:'ic-ghost-label'},t('Fill short'))),h('span',{className:'ic-bubble',role:'tooltip'},t('Fill hint'))),
+        h('div',{className:'ic-float ic-br'},aiAt>0&&h('span',{className:'ic-live',role:'status'},t('AI is editing')),h('span',{className:'ic-tipwrap'},h('button',{type:'button',className:'ic-iconbtn',onClick:()=>exportPng(false),title:t('Export PNG'),'aria-label':t('Export PNG'),disabled:!doc?.elements?.length,style:{width:38,height:38}},h(ToolIcon,{kind:'image',size:23})),h('span',{className:'ic-bubble',role:'tooltip'},t('Export PNG'))),        sessionId&&h('span',{className:'ic-tipwrap'},h('button',{type:'button',className:'ic-ghost',onClick:fillComposer,title:t('Fill input'),'aria-label':t('Fill input'),disabled:!doc},h(ToolIcon,{kind:'compose',size:14}),h('span',{className:'ic-ghost-label'},t('Fill short'))),h('span',{className:'ic-bubble',role:'tooltip'},t('Fill hint'))),
         sessionId&&h('span',{className:'ic-tipwrap'},h('button',{type:'button',className:'ic-send',onClick:ask,disabled:sending||!doc,title:t('Send to AI'),'aria-label':t('Send to AI')},h(ToolIcon,{kind:'send',size:14}),t('Send to AI')),h('span',{className:'ic-bubble',role:'tooltip'},t('Send hint'))),h('span',{className:'ic-chip'},busy?t('Saving…'):doc?`${t('Version')} ${doc.version}`:t('Loading…'))),
         (['pen','erase'].includes(tool)||strokeBar||textBar)&&h('div',{className:'ic-float ic-sel',role:'toolbar','aria-label':t('Size')},
           tool==='pen'&&h('span',{className:'ic-tipwrap'},
@@ -532,33 +830,33 @@ window.__ModuleLoader__.load({
             h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='esize'?null:'esize'),title:t('Eraser radius'),'aria-label':t('Eraser radius'),'aria-expanded':penPanel==='esize'},h('span',{className:'ic-dotmark',style:{width:Math.min(18,Math.max(5,radius*.45)),height:Math.min(18,Math.max(5,radius*.45))}})),
             h('span',{className:'ic-bubble',role:'tooltip'},t('Eraser radius'))),
           textBar&&h('span',{className:'ic-chip'},t('Font size')),
-          textBar&&h('select',{className:'ic-doc',value:fontSize,onChange:e=>{const n=+e.target.value;setFontSize(n);applySel({fontSize:n});},'aria-label':t('Font size'),title:t('Font size')},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),
+          textBar&&h('select',{className:'ic-doc',value:dFontSize,onChange:e=>{const n=+e.target.value;if(editSel)applySel({fontSize:n});else setFontSize(n);},'aria-label':t('Font size'),title:t('Font size')},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),
           textBar&&h('span',{className:'ic-tipwrap'},
-            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='tcolor'?null:'tcolor'),title:t('Text color'),'aria-label':t('Text color'),'aria-expanded':penPanel==='tcolor'},h('span',{className:'ic-swatch ic-swatch-mini',style:{background:textColor}})),
+            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='tcolor'?null:'tcolor'),title:t('Text color'),'aria-label':t('Text color'),'aria-expanded':penPanel==='tcolor'},h('span',{className:'ic-swatch ic-swatch-mini',style:{background:dTextColor}})),
             h('span',{className:'ic-bubble',role:'tooltip'},t('Text color'))),
           (strokeBar&&!noteBar)&&h('span',{className:'ic-tipwrap'},
-            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='color'?null:'color'),title:t('Border color'),'aria-label':t('Border color'),'aria-expanded':penPanel==='color'},h('span',{className:'ic-swatch ic-swatch-mini',style:{background:color}})),
+            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='color'?null:'color'),title:t('Border color'),'aria-label':t('Border color'),'aria-expanded':penPanel==='color'},h('span',{className:'ic-swatch ic-swatch-mini',style:{background:dColor}})),
             h('span',{className:'ic-bubble',role:'tooltip'},t('Border color'))),
           (strokeBar&&!noteBar)&&h('span',{className:'ic-tipwrap'},
-            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='size'?null:'size'),title:t('Border width'),'aria-label':t('Border width'),'aria-expanded':penPanel==='size'},h('span',{className:'ic-dotmark',style:{width:Math.min(16,Math.max(5,width*1.1)),height:Math.min(16,Math.max(5,width*1.1))}})),
+            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='size'?null:'size'),title:t('Border width'),'aria-label':t('Border width'),'aria-expanded':penPanel==='size'},h('span',{className:'ic-dotmark',style:{width:Math.min(16,Math.max(5,dWidth*1.1)),height:Math.min(16,Math.max(5,dWidth*1.1))}})),
             h('span',{className:'ic-bubble',role:'tooltip'},t('Border width'))),
-          fillBar&&button('Fill',()=>{const next=!fillOn;setFillOn(next);applySel({fill:next?fillColor:'none'});},{'aria-pressed':fillOn}),
+          fillBar&&button('Fill',()=>{const next=!dFillOn;if(editSel)applySel({fill:next?dFill:'none'});else setFillOn(next);},{'aria-pressed':dFillOn}),
           (fillBar||noteBar)&&h('span',{className:'ic-tipwrap'},
-            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='fill'?null:'fill'),title:t('Fill color'),'aria-label':t('Fill color'),'aria-expanded':penPanel==='fill'},h('span',{className:'ic-swatch ic-swatch-mini',style:{background:fillBar?fillColor:noteFill}})),
+            h('button',{type:'button',className:'ic-iconbtn',onClick:()=>setPenPanel(v=>v==='fill'?null:'fill'),title:t('Fill color'),'aria-label':t('Fill color'),'aria-expanded':penPanel==='fill'},h('span',{className:'ic-swatch ic-swatch-mini',style:{background:noteBar?dNoteFill:(dFillOn?dFill:fillColor)}})),
             h('span',{className:'ic-bubble',role:'tooltip'},t('Fill color'))),
           penPanel==='size'&&tool==='pen'&&h('div',{className:'ic-pen-card ic-pen-size',role:'group','aria-label':t('Pen size')},
             h('div',{className:'ic-pen-head'},h('strong',null,t('Pen size')),h('span',null,String(width))),
             h('input',{type:'range',className:'ic-pen-range',min:1,max:24,step:.5,value:width,onChange:e=>setWidth(+e.target.value),'aria-label':t('Pen size'),title:t('Pen size')})),
           penPanel==='size'&&tool!=='pen'&&strokeBar&&h('div',{className:'ic-pen-card ic-pen-size',role:'group','aria-label':t('Border width')},
-            h('div',{className:'ic-pen-head'},h('strong',null,t('Border width')),h('span',null,String(width))),
-            h('input',{type:'range',className:'ic-pen-range',min:1,max:24,step:.5,value:width,onChange:e=>{const n=+e.target.value;setWidth(n);styleLater({strokeWidth:n});},'aria-label':t('Border width'),title:t('Border width')})),
+            h('div',{className:'ic-pen-head'},h('strong',null,t('Border width')),h('span',null,String(dWidth))),
+            h('input',{type:'range',className:'ic-pen-range',min:1,max:24,step:.5,value:dWidth,onChange:e=>{const n=+e.target.value;if(editSel)styleLater({strokeWidth:n});else setWidth(n);},'aria-label':t('Border width'),title:t('Border width')})),
           penPanel==='esize'&&h('div',{className:'ic-pen-card ic-pen-size',role:'group','aria-label':t('Eraser radius')},
             h('div',{className:'ic-pen-head'},h('strong',null,t('Eraser radius')),h('span',null,String(radius))),
             h('input',{type:'range',className:'ic-pen-range',min:4,max:60,step:1,value:radius,onChange:e=>setRadius(+e.target.value),'aria-label':t('Eraser radius'),title:t('Eraser radius')})),
-          penPanel==='color'&&colorCard(setColor,color,c=>{if(tool!=='pen')applySel({stroke:c});}),
-          penPanel==='fill'&&fillBar&&colorCard(setFillColor,fillColor,c=>{applySel({fill:c});setFillOn(true);}),
-          penPanel==='fill'&&!fillBar&&noteBar&&colorCard(setNoteFill,noteFill,c=>{setFillColor(c);applySel({fill:c});}),
-          penPanel==='tcolor'&&colorCard(setTextColor,textColor,c=>applySel({textColor:c}))),
+          penPanel==='color'&&colorCard(c=>{if(editSel)applySel({stroke:c});else setColor(c);},dColor),
+          penPanel==='fill'&&fillBar&&colorCard(c=>{if(editSel)applySel({fill:c});else setFillColor(c);},dFill),
+          penPanel==='fill'&&!fillBar&&noteBar&&colorCard(c=>{if(editSel)applySel({fill:c});else{setNoteFill(c);setFillColor(c);}},dNoteFill),
+          penPanel==='tcolor'&&colorCard(c=>{if(editSel)applySel({textColor:c});else setTextColor(c);},dTextColor)),
         h('div',{className:'ic-notices'},
           error&&h('div',{className:'ic-notice ic-error',role:'alert'},h('span',null,error),button('Refresh',()=>refresh(true)),button('Dismiss',()=>setError(''))),
           doc?.pending?.filter(p=>!p.resolved&&p.status!=='resolved'&&p.status!=='rejected'&&p.status!=='approved').map(p=>h('div',{className:'ic-notice',key:p.id},h('span',null,t('Pending decisions'),': ',p.message||p.kind),button('Approve',()=>commit([{type:'resolvePending',id:p.id,approved:true}]),{disabled:busy}),button('Reject',()=>commit([{type:'resolvePending',id:p.id,approved:false}]),{disabled:busy}))),
@@ -569,13 +867,13 @@ window.__ModuleLoader__.load({
       const slots=ctx.get('slots'),locale=ctx.get('locale'),t=locale.bind('intent-canvas');
       const registerLocale=()=>locale.register('intent-canvas',{en:{...Object.fromEntries(Object.keys(labels).map(key=>[key,key])),'Canvas tab':'Canvas'},zh:labels});
       if(ctx.effect)ctx.effect(registerLocale);else registerLocale();
-      const stylesheet=".ic-app{--ic-bg:var(--dsw-alias-bg-base,#f5f5f2);--ic-panel:var(--dsw-alias-bg-layer-1,#fff);--ic-line:var(--dsw-alias-border-l1,#d9ded9);--ic-ink:var(--dsw-alias-label-primary,#25332d);--ic-muted:var(--dsw-alias-label-secondary,#6c7971);--ic-accent:var(--dsw-alias-brand-primary,#356c59);height:100%;min-height:0;display:flex;flex-direction:column;background:var(--ic-bg);color:var(--ic-ink);font:13px/1.45 system-ui,sans-serif;overflow:hidden;outline:none}.ic-app *{box-sizing:border-box}.ic-head,.ic-toolbar,.ic-footer{display:flex;align-items:center;gap:6px;padding:10px 14px;flex-wrap:wrap;background:var(--ic-panel);border-bottom:1px solid var(--ic-line)}.ic-head{justify-content:space-between}.ic-title{font-size:17px;font-weight:650;letter-spacing:-.5px}.ic-sub{font-size:11px;color:var(--ic-muted)}.ic-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.ic-app button,.ic-app input,.ic-app select,.ic-app textarea{font:inherit;color:inherit}.ic-app button,.ic-app select,.ic-doc{border:1px solid var(--ic-line);background:var(--ic-panel);border-radius:6px;min-height:30px;padding:5px 9px}.ic-app button{cursor:pointer}.ic-app button:hover{background:var(--dsw-alias-bg-layer-2,#eaf0ec)}.ic-app button:disabled{opacity:.4;cursor:default}.ic-app button[aria-pressed=true]{background:var(--ic-accent);border-color:var(--ic-accent);color:var(--dsw-alias-bg-base,#fff)}.ic-app :focus-visible{outline:2px solid var(--ic-accent);outline-offset:2px}.ic-doc{width:115px}.ic-divider{height:22px;width:1px;background:var(--ic-line);margin:0 3px}.ic-workspace{position:relative;flex:1;min-height:200px;overflow:hidden}.ic-canvas{display:block;width:100%;height:100%;position:absolute;inset:0;touch-action:none;user-select:none}.ic-empty{position:absolute;left:28px;top:26px;pointer-events:none;color:var(--ic-muted);max-width:300px}.ic-empty strong{display:block;font-size:24px;font-weight:450;letter-spacing:-.8px;color:var(--ic-ink);margin-bottom:7px}.ic-footer{border-top:1px solid var(--ic-line);border-bottom:0;justify-content:space-between;padding:7px 14px;color:var(--ic-muted);font-size:11px}.ic-hint{font-size:11px;line-height:1.5;color:var(--ic-muted);white-space:normal}.ic-notice{padding:8px 14px;background:var(--dsw-alias-bg-layer-2,#eef1ed);border-bottom:1px solid var(--ic-line);display:flex;align-items:center;gap:10px;flex-wrap:wrap}.ic-error{color:var(--dsw-alias-state-error-primary,#af3b3b)}.ic-consult{position:absolute;right:18px;top:18px;width:min(330px,calc(100% - 36px));padding:16px;background:var(--ic-panel);border:1px solid var(--ic-line);border-radius:10px;box-shadow:0 8px 30px #0002}.ic-consult h3{margin:0 0 6px;font-size:15px}.ic-consult p{margin:0 0 12px;color:var(--ic-muted)}.ic-editor{position:absolute;resize:both;z-index:3;border:2px solid var(--ic-accent);background:var(--ic-panel);padding:8px;min-width:140px;min-height:65px;border-radius:4px}.ic-layerlist{max-height:180px;overflow:auto;display:flex;gap:5px;align-items:center;flex-wrap:wrap}.ic-color{width:32px;height:30px;padding:2px!important;border:1px solid var(--ic-line);background:transparent}.ic-sidebar{padding:12px;font:13px system-ui;color:var(--dsw-alias-label-primary);display:grid;gap:10px}.ic-sidebar button{font:inherit;padding:8px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:inherit;cursor:pointer}@media(max-width:700px){.ic-head,.ic-toolbar{padding:7px;gap:4px}.ic-toolbar button{font-size:11px;padding:5px}.ic-sub{display:none}.ic-footer{padding:6px}.ic-title{font-size:15px}}@media(prefers-reduced-motion:reduce){.ic-app *{scroll-behavior:auto}}\n";
+      const stylesheet=".ic-app{--ic-bg:var(--dsw-alias-bg-base,#f5f5f2);--ic-panel:var(--dsw-alias-bg-layer-1,#fff);--ic-line:var(--dsw-alias-border-l1,#d9ded9);--ic-ink:var(--dsw-alias-label-primary,#25332d);--ic-muted:var(--dsw-alias-label-secondary,#6c7971);--ic-accent:var(--dsw-alias-brand-primary,#356c59);height:100%;min-height:0;display:flex;flex-direction:column;background:var(--ic-bg);color:var(--ic-ink);font:13px/1.45 system-ui,sans-serif;overflow:hidden;outline:none;user-select:none;-webkit-user-select:none}.ic-app input,.ic-app textarea{user-select:text;-webkit-user-select:text}.ic-app *{box-sizing:border-box}.ic-head,.ic-toolbar,.ic-footer{display:flex;align-items:center;gap:6px;padding:10px 14px;flex-wrap:wrap;background:var(--ic-panel);border-bottom:1px solid var(--ic-line)}.ic-head{justify-content:space-between}.ic-title{font-size:17px;font-weight:650;letter-spacing:-.5px}.ic-sub{font-size:11px;color:var(--ic-muted)}.ic-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.ic-app button,.ic-app input,.ic-app select,.ic-app textarea{font:inherit;color:inherit}.ic-app button,.ic-app select,.ic-doc{border:1px solid var(--ic-line);background:var(--ic-panel);border-radius:6px;min-height:30px;padding:5px 9px}.ic-app button{cursor:pointer}.ic-app button:hover{background:var(--dsw-alias-bg-layer-2,#eaf0ec)}.ic-app button:disabled{opacity:.4;cursor:default}.ic-app button[aria-pressed=true]{background:var(--ic-accent);border-color:var(--ic-accent);color:var(--dsw-alias-bg-base,#fff)}.ic-app :focus-visible{outline:2px solid var(--ic-accent);outline-offset:2px}.ic-doc{width:115px}.ic-divider{height:22px;width:1px;background:var(--ic-line);margin:0 3px}.ic-workspace{position:relative;flex:1;min-height:200px;overflow:hidden}.ic-canvas{display:block;width:100%;height:100%;position:absolute;inset:0;touch-action:none;user-select:none;pointer-events:none}.ic-scene{z-index:0}.ic-overlay{pointer-events:auto;z-index:1;cursor:crosshair}.ic-empty{position:absolute;left:28px;top:26px;pointer-events:none;color:var(--ic-muted);max-width:300px}.ic-empty strong{display:block;font-size:24px;font-weight:450;letter-spacing:-.8px;color:var(--ic-ink);margin-bottom:7px}.ic-footer{border-top:1px solid var(--ic-line);border-bottom:0;justify-content:space-between;padding:7px 14px;color:var(--ic-muted);font-size:11px}.ic-hint{font-size:11px;line-height:1.5;color:var(--ic-muted);white-space:normal}.ic-notice{padding:8px 14px;background:var(--dsw-alias-bg-layer-2,#eef1ed);border-bottom:1px solid var(--ic-line);display:flex;align-items:center;gap:10px;flex-wrap:wrap}.ic-error{color:var(--dsw-alias-state-error-primary,#af3b3b)}.ic-consult{position:absolute;right:18px;top:18px;width:min(330px,calc(100% - 36px));padding:16px;background:var(--ic-panel);border:1px solid var(--ic-line);border-radius:10px;box-shadow:0 8px 30px #0002}.ic-consult h3{margin:0 0 6px;font-size:15px}.ic-consult p{margin:0 0 12px;color:var(--ic-muted)}.ic-editor{position:absolute;resize:both;z-index:3;border:2px solid var(--ic-accent);background:var(--ic-panel);padding:8px;min-width:140px;min-height:65px;border-radius:4px}.ic-layerlist{max-height:180px;overflow:auto;display:flex;gap:5px;align-items:center;flex-wrap:wrap}.ic-color{width:32px;height:30px;padding:2px!important;border:1px solid var(--ic-line);background:transparent}.ic-sidebar{padding:12px;font:13px system-ui;color:var(--dsw-alias-label-primary);display:grid;gap:10px}.ic-sidebar button{font:inherit;padding:8px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:inherit;cursor:pointer}@media(max-width:700px){.ic-head,.ic-toolbar{padding:7px;gap:4px}.ic-toolbar button{font-size:11px;padding:5px}.ic-sub{display:none}.ic-footer{padding:6px}.ic-title{font-size:15px}}@media(prefers-reduced-motion:reduce){.ic-app *{scroll-behavior:auto}}\n";
       const live=".ic-live{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--dsw-alias-brand-primary,#356c59);border:1px solid var(--dsw-alias-brand-primary,#356c59);border-radius:999px;padding:2px 8px}.ic-live::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;animation:ic-pulse 1s infinite}@keyframes ic-pulse{0%,100%{opacity:1}50%{opacity:.25}}";
       // Narrow column adaptation: one scrollable toolbar row instead of a tall stack, and no oversized empty state.
       const compact=".ic-app{container-type:inline-size}.ic-toolbar{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}.ic-workspace{min-height:120px}@container (max-width:560px){.ic-head,.ic-toolbar,.ic-footer{padding:6px 8px;gap:4px}.ic-title{font-size:15px}.ic-sub{display:none}.ic-app button,.ic-app select,.ic-doc{min-height:26px;padding:3px 6px;font-size:12px}.ic-doc{width:96px}.ic-empty{left:12px;top:10px;max-width:200px}.ic-empty strong{font-size:17px;margin-bottom:2px}.ic-footer{font-size:11px}}";
       // Full-bleed canvas with floating clusters, matching the reference control positions.
-      const layout=".ic-app{position:relative;display:flex;flex-direction:column;overflow:hidden}.ic-workspace{position:relative;order:2;flex:1;min-height:0;overflow:hidden}.ic-float{position:absolute;z-index:6;display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 8px;background:var(--dsw-alias-bg-overlay,var(--ic-panel));backdrop-filter:blur(6px);border:1px solid var(--ic-line);border-radius:14px;box-shadow:0 2px 10px rgba(16,24,20,.10);max-width:calc(100% - 16px);overflow:visible;scrollbar-width:none}.ic-float::-webkit-scrollbar{display:none}.ic-top{position:relative;z-index:6;order:1;display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;background:var(--ic-panel);border-bottom:1px solid var(--ic-line)}.ic-top .ic-float{position:static;background:transparent;border:none;box-shadow:none;padding:0}.ic-tl{flex:0 0 auto;order:1}.ic-tr{flex:0 0 auto;order:2;margin-left:auto}.ic-tcwrap{position:relative;flex:1 1 100%;order:3;min-width:0;max-width:100%;display:flex;justify-content:center}.ic-bl{bottom:14px;left:10px}.ic-bc{bottom:14px;left:50%;transform:translateX(-50%)}.ic-br{bottom:14px;right:10px}.ic-rail{left:10px;top:50%;transform:translateY(-50%);flex-direction:column;align-items:center;gap:4px;padding:8px 6px;z-index:7;max-height:calc(100% - 130px);overflow:visible}.ic-rail button{width:36px!important;height:34px!important;padding:0!important}.ic-rail .ic-tool-extra{display:inline-flex!important}.ic-rail .ic-more{display:none!important}.ic-tip-rail{left:calc(100% + 10px);top:0;transform:translateY(-50%)}.ic-foot{position:relative;z-index:6;order:3;flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:3px 10px;border-top:1px solid var(--ic-line);background:var(--ic-panel);color:var(--ic-muted);font-size:11px;line-height:1.5;white-space:nowrap;overflow:hidden}.ic-sel .ic-pen-card{top:calc(100% + 8px);bottom:auto}.ic-sel{top:54px;bottom:auto;left:50%;transform:translateX(-50%);justify-content:center}.ic-sel input{flex:1 1 120px;min-width:80px}.ic-sel .ic-pen-range{width:100%;min-width:0;accent-color:var(--ic-accent)}.ic-pen-size{display:flex;flex-direction:column;gap:2px;min-width:160px}.ic-pen-size .ic-pen-head strong{font-weight:600;font-size:12px;color:inherit}.ic-pen-size .ic-pen-range{width:100%;min-width:0;accent-color:var(--ic-accent)}.ic-notices{position:absolute;z-index:7;top:auto;bottom:70px;left:10px;display:flex;flex-direction:column-reverse;gap:6px;max-width:min(420px,calc(100% - 20px));pointer-events:none}.ic-notices>*{pointer-events:auto}.ic-brand{display:flex;align-items:center;gap:5px;font-weight:650;font-size:13px;margin-right:2px}.ic-chip{font-size:11px;color:var(--ic-muted);white-space:nowrap}.ic-float button,.ic-float select{min-height:32px;padding:4px 10px;border-radius:9px;font-size:13px;flex:0 0 auto;white-space:nowrap}.ic-float .ic-doc{width:86px;min-height:26px;padding:2px 6px;font-size:12px}.ic-float input[type=range]{width:62px}.ic-empty{left:50%;top:44%;transform:translate(-50%,-50%);text-align:center;max-width:280px}@container (max-width:600px){.ic-doc{display:none}.ic-bc{display:none}.ic-tc button{width:32px;height:30px}}.ic-tcwrap .ic-tc{position:static;transform:none;width:max-content;max-width:100%;margin:0 auto;justify-content:center}.ic-consult{top:auto;bottom:64px;right:10px}.ic-canvas{will-change:transform;contain:paint}.ic-handles{position:absolute;inset:0;z-index:9;pointer-events:none}.ic-handle{position:absolute;width:10px;height:10px;border:1.2px solid var(--ic-accent);background:var(--dsw-alias-bg-overlay,var(--ic-panel));border-radius:2px;box-sizing:border-box;pointer-events:auto}.ic-more-wrap{position:relative;display:inline-flex}.ic-tc .ic-more{display:none;width:34px;height:34px;align-items:center;justify-content:center;padding:0}.ic-menu{position:absolute;z-index:12;top:calc(100% + 6px);right:0;display:flex;flex-direction:column;gap:2px;min-width:132px;padding:6px;background:var(--ic-panel);border:1px solid var(--ic-line);border-radius:10px;box-shadow:0 8px 24px rgba(16,24,20,.16)}.ic-menu button{display:flex;align-items:center;gap:8px;justify-content:flex-start;min-height:30px;padding:4px 8px;border:none;background:transparent;white-space:nowrap;font-size:13px}.ic-menu button:hover{background:var(--dsw-alias-bg-layer-2,#eaf0ec)}.ic-bc .ic-menu{top:auto;bottom:calc(100% + 6px)}@container (max-width:640px){.ic-tc .ic-tool-extra{display:none}.ic-tc .ic-more{display:inline-flex}}.ic-tip{position:absolute;top:calc(100% + 7px);transform:translateX(-50%);white-space:nowrap;font-size:12px;line-height:1.4;padding:4px 9px;border-radius:7px;background:var(--ic-panel);border:1px solid var(--ic-line);box-shadow:0 3px 10px rgba(16,24,20,.12);color:var(--ic-muted);pointer-events:none;z-index:8}.ic-tc button{width:38px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center}.ic-float button svg{display:block}.ic-float .ic-send{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:5px 14px;border-radius:999px;background:var(--ic-accent);border:1px solid var(--ic-accent);color:var(--dsw-alias-bg-base,#fff);font-weight:600;font-size:13px;cursor:pointer;box-shadow:0 2px 5px rgba(16,24,20,.18)}.ic-float .ic-send:hover{filter:brightness(1.07)}.ic-float .ic-send:hover{background:var(--ic-accent);color:var(--dsw-alias-bg-base,#fff);border-color:var(--ic-accent);filter:brightness(1.08);box-shadow:0 4px 12px rgba(16,24,20,.28)}.ic-float .ic-send:disabled{opacity:.45;cursor:default;filter:none}.ic-float .ic-send:disabled{opacity:.45;cursor:default}.ic-dot{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;padding:0;border:1px solid transparent;background:transparent}.ic-dotmark{display:block;border-radius:50%;background:currentColor}.ic-pen-card{position:absolute;z-index:22;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);min-width:170px;padding:10px;background:var(--dsw-alias-bg-overlay,var(--ic-panel));backdrop-filter:blur(6px);border:1px solid var(--ic-line);border-radius:12px;box-shadow:0 8px 24px rgba(16,24,20,.16);display:flex;flex-direction:column;gap:6px}.ic-pen-head{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--ic-muted)}.ic-pen-kind{display:flex;align-items:center;gap:8px;justify-content:flex-start;min-height:30px;padding:4px 8px;border:none;background:transparent;font-size:13px;border-radius:8px;white-space:nowrap}.ic-pen-kind:hover,.ic-pen-kind[aria-pressed=true]{background:var(--dsw-alias-bg-layer-2,#eef1ed)}.ic-swatches{display:grid;grid-template-columns:repeat(6,26px);gap:8px;justify-content:center}.ic-swatch{width:26px;height:26px;border-radius:50%;border:1px solid rgba(16,24,20,.14);padding:0;cursor:pointer}.ic-swatch-mini{width:18px;height:18px;display:block}.ic-swatch-custom{display:inline-flex;align-items:center;justify-content:center;background:conic-gradient(#e03131,#f08c00,#fab005,#2f9e44,#1971c2,#7048e8,#e03131);position:relative;overflow:hidden}.ic-swatch-custom input{position:absolute;inset:0;opacity:0;width:100%;height:100%;border:none;padding:0;cursor:pointer}.ic-tipwrap{position:relative;display:inline-flex}.ic-tipwrap .ic-bubble{position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);white-space:nowrap;background:var(--dsw-alias-bg-overlay,var(--ic-panel));color:var(--dsw-alias-bg-base,#fff);font-size:11px;line-height:1.5;padding:3px 8px;border-radius:6px;opacity:0;pointer-events:none;transition:opacity .12s;z-index:12}.ic-tipwrap:hover .ic-bubble,.ic-tipwrap:focus-within .ic-bubble{opacity:1}.ic-tipwrap .ic-bubble::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:4px solid transparent;border-top-color:var(--dsw-alias-bg-overlay,var(--ic-panel))}.ic-ctx{position:absolute;z-index:30;min-width:150px;padding:6px;display:flex;flex-direction:column;gap:2px;background:var(--ic-panel);border:1px solid var(--ic-line);border-radius:10px;box-shadow:0 8px 24px rgba(16,24,20,.18)}.ic-ctx button{display:flex;align-items:center;justify-content:flex-start;min-height:30px;padding:4px 10px;border:none;background:transparent;font-size:13px;white-space:nowrap;border-radius:7px}.ic-ctx button:hover{background:var(--dsw-alias-bg-layer-2,#eaf0ec)}.ic-handle-rotate{position:absolute;width:16px;height:16px;pointer-events:auto;border-radius:50%;background:var(--ic-panel);border:1.5px solid var(--ic-accent);box-shadow:0 1px 4px rgba(16,24,20,.18)}.ic-handle-rotate::after{content:'';position:absolute;inset:2px;border-radius:50%;border:1.5px dashed var(--ic-accent)}.ic-iconbtn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0}.ic-ghost{display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:4px 10px;border-radius:999px;border:1px solid var(--ic-accent);background:transparent;color:var(--ic-accent);font-size:12px;font-weight:600;white-space:nowrap;box-shadow:0 1px 3px rgba(16,24,20,.14)}.ic-ghost:hover{box-shadow:0 3px 10px rgba(16,24,20,.24);border-color:var(--ic-accent)}.ic-ghost:disabled{opacity:.45;cursor:default}@container (max-width:560px){.ic-ghost-label{display:none}}.ic-note{width:190px;min-height:32px;padding:4px 9px;border:1px solid var(--ic-line);border-radius:9px;background:var(--ic-panel);color:inherit;font-size:13px}";
-      const penbar=".ic-sel{border-radius:999px;padding:6px 8px}.ic-pen-types{flex-direction:row;align-items:center;gap:4px;min-width:0;border-radius:999px;padding:6px 8px}.ic-pen-types .ic-pen-kind{width:34px;height:34px;min-height:0;padding:0;gap:0;justify-content:center;border-radius:999px}.ic-pen-types .ic-pen-kind:hover{background:var(--dsw-alias-bg-layer-2,var(--ic-panel))}.ic-pen-types .ic-pen-kind[aria-pressed=true]{background:var(--dsw-alias-bg-layer-2,var(--ic-panel))}.ic-pen-head span{font-weight:650;color:var(--ic-ink)}.ic-tipwrap .ic-bubble{background:var(--dsw-alias-bg-overlay,var(--ic-panel));color:var(--ic-ink);border:1px solid var(--ic-line);box-shadow:0 4px 14px rgba(16,24,20,.16)}.ic-tipwrap .ic-bubble::after{border-top-color:var(--dsw-alias-bg-overlay,var(--ic-panel))}.ic-sel .ic-tipwrap .ic-bubble{bottom:auto;top:calc(100% + 8px)}.ic-sel .ic-tipwrap .ic-bubble::after{top:auto;bottom:100%;border-top-color:transparent;border-bottom-color:var(--dsw-alias-bg-overlay,var(--ic-panel))}.ic-pen-card{background:var(--dsw-alias-bg-overlay,var(--ic-panel));border:1px solid var(--ic-line);box-shadow:0 10px 30px rgba(16,24,20,.18)}.ic-pen-size{min-width:190px;gap:6px}.ic-pen-range{display:block;width:100%;margin:0}.ic-sel .ic-pen-size input[type=range]{flex:0 0 auto;width:100%;height:auto;min-width:0}.ic-sel .ic-color{flex:0 0 auto;width:26px;height:26px;min-width:0;padding:0;border:none;border-radius:50%;background:transparent;cursor:pointer}.ic-float:empty{display:none}";
+      const layout=".ic-app{position:relative;display:flex;flex-direction:column;overflow:hidden}.ic-workspace{position:relative;order:2;flex:1;min-height:0;overflow:hidden}.ic-float{position:absolute;z-index:6;display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 8px;background:var(--ic-panel);border:1px solid var(--ic-line);border-radius:14px;box-shadow:0 2px 10px rgba(16,24,20,.10);max-width:calc(100% - 16px);overflow:visible;scrollbar-width:none}.ic-float::-webkit-scrollbar{display:none}.ic-top{position:relative;z-index:6;order:1;display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;background:var(--ic-panel);border-bottom:1px solid var(--ic-line)}.ic-top .ic-float{position:static;background:transparent;border:none;box-shadow:none;padding:0}.ic-tl{flex:0 0 auto;order:1}.ic-tr{flex:0 0 auto;order:2;margin-left:auto}.ic-tcwrap{position:relative;flex:1 1 100%;order:3;min-width:0;max-width:100%;display:flex;justify-content:center}.ic-bl{bottom:14px;left:10px}.ic-bc{bottom:14px;left:50%;transform:translateX(-50%)}.ic-br{bottom:14px;right:10px}.ic-rail{left:10px;top:50%;transform:translateY(-50%);flex-direction:column;align-items:center;gap:4px;padding:8px 6px;z-index:7;max-height:calc(100% - 130px);overflow:visible}.ic-rail button{width:36px!important;height:34px!important;padding:0!important}.ic-rail .ic-tool-extra{display:inline-flex!important}.ic-rail .ic-more{display:none!important}.ic-tip-rail{left:calc(100% + 10px);top:0;transform:translateY(-50%)}.ic-foot{position:relative;z-index:6;order:3;flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:3px 10px;border-top:1px solid var(--ic-line);background:var(--ic-panel);color:var(--ic-muted);font-size:11px;line-height:1.5;white-space:nowrap;overflow:hidden}.ic-sel .ic-pen-card{top:calc(100% + 8px);bottom:auto}.ic-sel{top:54px;bottom:auto;left:50%;transform:translateX(-50%);justify-content:center}.ic-sel input{flex:1 1 120px;min-width:80px}.ic-sel .ic-pen-range{width:100%;min-width:0;accent-color:var(--ic-accent)}.ic-pen-size{display:flex;flex-direction:column;gap:2px;min-width:160px}.ic-pen-size .ic-pen-head strong{font-weight:600;font-size:12px;color:inherit}.ic-pen-size .ic-pen-range{width:100%;min-width:0;accent-color:var(--ic-accent)}.ic-notices{position:absolute;z-index:7;top:auto;bottom:70px;left:10px;display:flex;flex-direction:column-reverse;gap:6px;max-width:min(420px,calc(100% - 20px));pointer-events:none}.ic-notices>*{pointer-events:auto}.ic-brand{display:flex;align-items:center;gap:5px;font-weight:650;font-size:13px;margin-right:2px}.ic-chip{font-size:11px;color:var(--ic-muted);white-space:nowrap}.ic-float button,.ic-float select{min-height:32px;padding:4px 10px;border-radius:9px;font-size:13px;flex:0 0 auto;white-space:nowrap}.ic-float .ic-doc{width:86px;min-height:26px;padding:2px 6px;font-size:12px}.ic-float input[type=range]{width:62px}.ic-empty{left:50%;top:44%;transform:translate(-50%,-50%);text-align:center;max-width:280px}@container (max-width:600px){.ic-doc{display:none}.ic-bc{display:none}.ic-tc button{width:32px;height:30px}}.ic-tcwrap .ic-tc{position:static;transform:none;width:max-content;max-width:100%;margin:0 auto;justify-content:center}.ic-consult{top:auto;bottom:64px;right:10px}.ic-canvas{will-change:transform;contain:paint}.ic-more-wrap{position:relative;display:inline-flex}.ic-tc .ic-more{display:none;width:34px;height:34px;align-items:center;justify-content:center;padding:0}.ic-menu{position:absolute;z-index:12;top:calc(100% + 6px);right:0;display:flex;flex-direction:column;gap:2px;min-width:132px;padding:6px;background:var(--ic-panel);border:1px solid var(--ic-line);border-radius:10px;box-shadow:0 8px 24px rgba(16,24,20,.16)}.ic-menu button{display:flex;align-items:center;gap:8px;justify-content:flex-start;min-height:30px;padding:4px 8px;border:none;background:transparent;white-space:nowrap;font-size:13px}.ic-menu button:hover{background:var(--dsw-alias-bg-layer-2,#eaf0ec)}.ic-bc .ic-menu{top:auto;bottom:calc(100% + 6px)}@container (max-width:640px){.ic-tc .ic-tool-extra{display:none}.ic-tc .ic-more{display:inline-flex}}.ic-tip{position:absolute;top:calc(100% + 7px);transform:translateX(-50%);white-space:nowrap;font-size:12px;line-height:1.4;padding:4px 9px;border-radius:7px;background:var(--ic-panel);border:1px solid var(--ic-line);box-shadow:0 3px 10px rgba(16,24,20,.12);color:var(--ic-muted);pointer-events:none;z-index:8}.ic-tc button{width:38px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center}.ic-float button svg{display:block}.ic-float .ic-send{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:5px 14px;border-radius:999px;background:var(--ic-accent);border:1px solid var(--ic-accent);color:var(--dsw-alias-bg-base,#fff);font-weight:600;font-size:13px;cursor:pointer;box-shadow:0 2px 5px rgba(16,24,20,.18)}.ic-float .ic-send:hover{filter:brightness(1.07)}.ic-float .ic-send:hover{background:var(--ic-accent);color:var(--dsw-alias-bg-base,#fff);border-color:var(--ic-accent);filter:brightness(1.08);box-shadow:0 4px 12px rgba(16,24,20,.28)}.ic-float .ic-send:disabled{opacity:.45;cursor:default;filter:none}.ic-float .ic-send:disabled{opacity:.45;cursor:default}.ic-dot{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;padding:0;border:1px solid transparent;background:transparent}.ic-dotmark{display:block;border-radius:50%;background:currentColor}.ic-pen-card{position:absolute;z-index:22;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);min-width:170px;padding:10px;background:var(--dsw-alias-bg-overlay,var(--ic-panel));backdrop-filter:blur(6px);border:1px solid var(--ic-line);border-radius:12px;box-shadow:0 8px 24px rgba(16,24,20,.16);display:flex;flex-direction:column;gap:6px}.ic-pen-head{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--ic-muted)}.ic-pen-kind{display:flex;align-items:center;gap:8px;justify-content:flex-start;min-height:30px;padding:4px 8px;border:none;background:transparent;font-size:13px;border-radius:8px;white-space:nowrap}.ic-pen-kind:hover,.ic-pen-kind[aria-pressed=true]{background:var(--dsw-alias-bg-layer-2,#eef1ed)}.ic-swatches{display:grid;grid-template-columns:repeat(6,26px);gap:8px;justify-content:center}.ic-swatch{width:26px;height:26px;border-radius:50%;border:1px solid rgba(16,24,20,.14);padding:0;cursor:pointer}.ic-swatch-mini{width:18px;height:18px;display:block}.ic-swatch-custom{display:inline-flex;align-items:center;justify-content:center;background:conic-gradient(#e03131,#f08c00,#fab005,#2f9e44,#1971c2,#7048e8,#e03131);position:relative;overflow:hidden}.ic-swatch-custom input{position:absolute;inset:0;opacity:0;width:100%;height:100%;border:none;padding:0;cursor:pointer}.ic-tipwrap{position:relative;display:inline-flex}.ic-tipwrap .ic-bubble{position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);white-space:nowrap;background:var(--dsw-alias-bg-overlay,var(--ic-panel));color:var(--dsw-alias-bg-base,#fff);font-size:11px;line-height:1.5;padding:3px 8px;border-radius:6px;opacity:0;pointer-events:none;transition:opacity .12s;z-index:12}.ic-tipwrap:hover .ic-bubble,.ic-tipwrap:focus-within .ic-bubble{opacity:1}.ic-tipwrap .ic-bubble::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:4px solid transparent;border-top-color:var(--dsw-alias-bg-overlay,var(--ic-panel))}.ic-ctx{position:absolute;z-index:30;min-width:150px;max-height:calc(100% - 8px);overflow:auto;padding:6px;display:flex;flex-direction:column;gap:2px;background:var(--ic-panel);border:1px solid var(--ic-line);border-radius:10px;box-shadow:0 8px 24px rgba(16,24,20,.18)}.ic-ctx button{display:flex;align-items:center;justify-content:flex-start;min-height:30px;padding:4px 10px;border:none;background:transparent;font-size:13px;white-space:nowrap;border-radius:7px}.ic-ctx button:hover{background:var(--dsw-alias-bg-layer-2,#eaf0ec)}.ic-ctx-sep{height:1px;background:var(--ic-line);margin:4px 2px}.ic-iconbtn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0}.ic-ghost{display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:4px 10px;border-radius:999px;border:1px solid var(--ic-accent);background:transparent;color:var(--ic-accent);font-size:12px;font-weight:600;white-space:nowrap;box-shadow:0 1px 3px rgba(16,24,20,.14)}.ic-ghost:hover{box-shadow:0 3px 10px rgba(16,24,20,.24);border-color:var(--ic-accent)}.ic-ghost:disabled{opacity:.45;cursor:default}@container (max-width:560px){.ic-ghost-label{display:none}}.ic-note{width:190px;min-height:32px;padding:4px 9px;border:1px solid var(--ic-line);border-radius:9px;background:var(--ic-panel);color:inherit;font-size:13px}";
+      const penbar=".ic-sel{border-radius:999px;padding:6px 8px}.ic-pen-types{flex-direction:row;align-items:center;gap:4px;min-width:0;border-radius:999px;padding:6px 8px}.ic-pen-types .ic-pen-kind{width:34px;height:34px;min-height:0;padding:0;gap:0;justify-content:center;border-radius:999px}.ic-pen-types .ic-pen-kind:hover{background:var(--dsw-alias-bg-layer-2,var(--ic-panel))}.ic-pen-types .ic-pen-kind[aria-pressed=true]{background:var(--dsw-alias-bg-layer-2,var(--ic-panel));color:var(--ic-ink)}.ic-pen-head span{font-weight:650;color:var(--ic-ink)}.ic-tipwrap .ic-bubble{background:var(--dsw-alias-bg-overlay,var(--ic-panel));color:var(--ic-ink);border:1px solid var(--ic-line);box-shadow:0 4px 14px rgba(16,24,20,.16)}.ic-tipwrap .ic-bubble::after{border-top-color:var(--dsw-alias-bg-overlay,var(--ic-panel))}.ic-sel .ic-tipwrap .ic-bubble{bottom:auto;top:calc(100% + 8px)}.ic-sel .ic-tipwrap .ic-bubble::after{top:auto;bottom:100%;border-top-color:transparent;border-bottom-color:var(--dsw-alias-bg-overlay,var(--ic-panel))}.ic-pen-card{background:var(--dsw-alias-bg-overlay,var(--ic-panel));border:1px solid var(--ic-line);box-shadow:0 10px 30px rgba(16,24,20,.18)}.ic-pen-size{min-width:190px;gap:6px}.ic-pen-range{display:block;width:100%;margin:0}.ic-sel .ic-pen-size input[type=range]{flex:0 0 auto;width:100%;height:auto;min-width:0}.ic-sel .ic-color{flex:0 0 auto;width:26px;height:26px;min-width:0;padding:0;border:none;border-radius:50%;background:transparent;cursor:pointer}.ic-float:empty{display:none}.ic-float .ic-iconbtn{padding:0}.ic-float .ic-swatch-mini{flex:0 0 18px}.ic-float .ic-dotmark{flex:0 0 auto}";
       // The chrome element is built once and reused, so re-renders during a drag leave the styles untouched.
       const chrome=h(React.Fragment,null,h('style',null,stylesheet),h('style',null,live),h('style',null,compact),h('style',null,layout),h('style',null,penbar));
       // Cache the rendered subtree per session: the host re-renders its tree while streaming, and returning the
@@ -599,7 +897,7 @@ window.__ModuleLoader__.load({
         dockSlots.inject('sidebar.right.pane.tab',()=>dockSlots.register({name:'sidebar.right.pane.tab',key:'@local/intent-canvas/board'},Board));
         const Open=({sessionId})=>{const seen=useRef(null);
           useEffect(()=>{if(!sessionId||!side)return;const doc=sessionDoc(sessionId);let stop=false;
-            const tick=async()=>{try{const r=await readDoc(doc);if(stop)return;const v=r.document?.version??0;
+            const tick=async()=>{try{const r=await readDoc(doc,seen.current);if(stop)return;const v=r.version??r.document?.version??0;
                 if(seen.current===null){seen.current=v;return;}
                 if(v>seen.current){seen.current=v;
                   if(r.activity?.author==='ai'){try{side.openTab('canvas');}catch(e){}

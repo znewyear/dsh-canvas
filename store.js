@@ -1,5 +1,9 @@
 import { initialDocument, applyOperations, readSnapshot } from './engine.js';
 
+// Undo/redo replays on the host; the UI only checks stack depth, so image bytes are not echoed inside history snapshots.
+const lightSnapshot = snapshot => ({...snapshot, elements: snapshot.elements.map(e => e.kind === 'image' && typeof e.src === 'string' ? {...e, src: '[image data omitted]'} : e)});
+const wire = document => ({...document, history: document.history.map(lightSnapshot), future: document.future.map(lightSnapshot)});
+
 export function createStore(table) {
   let queue = Promise.resolve();
   function docId(value = 'canvas') {
@@ -11,14 +15,16 @@ export function createStore(table) {
       const id = docId(doc);
       await queue;
       const current = table.get(id) ?? initialDocument(id);
-      return {ok:true, document:readSnapshot(current), ...(sinceSeq === current.version ? {unchanged:true} : {})};
+      // A poll that already knows the version gets a small acknowledgement instead of the whole document again.
+      if (sinceSeq === current.version) return {ok:true, unchanged:true, version: current.version};
+      return {ok:true, document: wire(readSnapshot(current))};
     },
     apply({doc = 'canvas', baseVersion, ops} = {}, author = 'ai') {
       const task = queue.then(async () => {
         const id = docId(doc), current = table.get(id) ?? initialDocument(id);
         const result = applyOperations(current, baseVersion, ops, author);
         await table.put(id, result.document);
-        return {ok:true, ...result, document:readSnapshot(result.document)};
+        return {ok:true, ...result, document:wire(readSnapshot(result.document))};
       });
       queue = task.catch(() => {});
       return task;

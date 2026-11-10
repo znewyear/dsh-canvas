@@ -10,6 +10,7 @@ test('fragment eraser cuts closed shapes into path fragments', () => {
   const out = run(d, [{ type: 'erasePath', points: [[50, 0]], radius: 5 }]);
   assert.ok(out.document.elements.length >= 1);
   assert.ok(out.document.elements.every(e => e.kind === 'path'));
+  assert.ok(out.document.elements.every(e => e.sharp === true), 'shape fragments render with straight edges');
   assert.equal(out.document.elements[0].id, 'r');
 });
 
@@ -124,6 +125,18 @@ test('paste/align/distribute and invalid geometry remains atomic', () => {
   d = run(d, [{ type: 'align', ids, alignment: 'top' }, { type: 'distribute', ids, axis: 'horizontal' }]).document;
   assert.deepEqual(d.elements.map(e => e.rect[1]), [0, 0, 0]); assert.deepEqual(d.elements.map(e => e.rect[0]), [0, 50, 100]);
   assert.throws(() => run(d, [{ type: 'move', ids, dx: 1e6, dy: 0 }]));
+});
+
+test('image elements require a bounded data URL and resize/rotate like shapes', () => {
+  const src = 'data:image/webp;base64,' + 'A'.repeat(48);
+  let d = seed({ id: 'img', kind: 'image', rect: [0, 0, 120, 60], src });
+  d = run(d, [{ type: 'resize', id: 'img', rect: [10, 20, 300, 150] }, { type: 'update', id: 'img', patch: { rotation: 45 } }]).document;
+  assert.deepEqual(d.elements[0].rect, [10, 20, 300, 150]);
+  assert.equal(d.elements[0].rotation, 45);
+  for (const bad of ['https://example.com/a.png', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/png;base64,' + 'A'.repeat(900001)]) {
+    assert.throws(() => run(d, [{ type: 'create', element: { id: 'bad', kind: 'image', rect: [0, 0, 1, 1], src: bad } }]), /bounded raster data URL/);
+  }
+  assert.equal(d.elements.length, 1);
 });
 
 test('explicit circle promotion requires consultation approval by human', () => {

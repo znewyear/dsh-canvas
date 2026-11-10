@@ -8,14 +8,14 @@ const source=await readFile(new URL('./client.js',import.meta.url),'utf8');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 
 // Drives the mounted panel with real pointer/keyboard handlers so the gesture code, not a copy of it, produces the operations.
-function harness({session,activity,inputActions,locale=createLocale()}={}){
-  let module,cursor=0;const states=[],refs=[],effects=[],registrations=[],calls=[];
-  const el=()=>({focus(){},getBoundingClientRect:()=>({left:0,top:0}),clientWidth:800,clientHeight:600,setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false,style:{}});
+function harness({session,activity,inputActions,locale=createLocale(),globals={},elements=[],canvasContext=null}={}){
+  let module,cursor=0;const states=[],refs=[],effects=[],effectDeps=[],registrations=[],calls=[];
+  const el=()=>({focus(){},getBoundingClientRect:()=>({left:0,top:0}),clientWidth:800,clientHeight:600,setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false,getContext:canvasContext?()=>canvasContext:undefined,style:{}});
   const React={Fragment:'fragment',createElement:(type,props,...children)=>({type,props,children}),
     useState(initial){const i=cursor++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return [states[i],value=>{states[i]=typeof value==='function'?value(states[i]):value;}];},
     useRef(initial){const i=cursor++;return refs[i]??={current:initial===null?el():initial};},
-    useEffect(fn){effects.push(fn);}};
-  const doc={id:'canvas',version:1,elements:[],history:[],future:[],annotations:[],pending:[]};
+    useEffect(fn,deps){const i=cursor++,prev=effectDeps[i];if(prev&&deps&&prev.length===deps.length&&deps.every((v,j)=>v===prev[j]))return;effectDeps[i]=deps;effects.push(fn);}};
+  const doc={id:'canvas',version:1,elements:[...elements],history:[],future:[],annotations:[],pending:[]};
   const envelope=d=>({ok:true,json:async()=>({ok:true,document:{...d,elements:[...d.elements]},...(activity?{activity}:{})})});
   const fetch=async(url,init)=>{
     calls.push([url,JSON.parse(init.body)]);
@@ -30,7 +30,9 @@ function harness({session,activity,inputActions,locale=createLocale()}={}){
     });
     return envelope(doc);
   };
-  vm.runInNewContext(source,{window:{__ModuleLoader__:{load:value=>{module=value;}},addEventListener(){},removeEventListener(){}},setInterval:()=>1,clearInterval(){},setTimeout:()=>0,clearTimeout(){},__DSH_TRANSPORT__:{fetch}});
+  const winListeners=new Map();
+  const windowStub={__ModuleLoader__:{load:value=>{module=value;}},addEventListener(type,fn){if(!winListeners.has(type))winListeners.set(type,new Set());winListeners.get(type).add(fn);},removeEventListener(type,fn){winListeners.get(type)?.delete(fn);}};
+  vm.runInNewContext(source,{window:windowStub,setInterval:()=>1,clearInterval(){},setTimeout:()=>0,clearTimeout(){},__DSH_TRANSPORT__:{fetch},...globals});
   const plugin=module.factory(()=>React);
   const sessions={retain:(id,options)=>({ready:Promise.resolve(),release(){},binding:{session:{prompt:async(content,mode)=>{calls.push(['prompt',id,options,content,mode]);return {ok:true};}}}})};
   plugin.apply({get:name=>({slots:{inject:(_,fn)=>fn(),register:(options,component)=>registrations.push({options,component})},locale,layout:{},sessions})[name]});
@@ -39,7 +41,9 @@ function harness({session,activity,inputActions,locale=createLocale()}={}){
   const render=()=>{cursor=0;return canvas.type(session?{...canvas.props,sessionId:session,inputActions}:canvas.props);};
   render();
   effects.splice(0).forEach(fn=>fn?.());
-  return {render,calls};
+  const flush=()=>{effects.splice(0).forEach(fn=>fn?.());};
+  const dispatch=(type,event)=>{for(const fn of [...(winListeners.get(type)||[])])fn(event);};
+  return {render,calls,flush,dispatch,doc};
 }
 const nodes=tree=>tree&&typeof tree==='object'?[tree,...(tree.children??[]).flatMap(nodes)]:[];
 const text=tree=>typeof tree==='string'?tree:(tree?.children??[]).map(text).join('');
@@ -150,21 +154,20 @@ test('rotating twice in a row commits both angles',async()=>{
   tree.props.onKeyDown(key('p'));
   await gesture(panel,[[100,100],[200,120],[300,140]]);
   const ev=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
-    target:{getAttribute:name=>name==='data-rotate'?'1':null},
-    preventDefault(){},stopPropagation(){},
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
     currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
-  const spin=(from,to)=>async()=>{
-    const layer=nodes(panel.render()).find(n=>n.props?.className==='ic-handles');
-    layer.props.onPointerDown(ev(...from));
-    layer.props.onPointerMove(ev(...to));
-    await layer.props.onPointerUp(ev(...to));
-    await tick();
-  };
-  await spin([200,60],[300,120])();
+  const rot=(p,c,a)=>[c[0]+(p[0]-c[0])*Math.cos(a)-(p[1]-c[1])*Math.sin(a),c[1]+(p[0]-c[0])*Math.sin(a)+(p[1]-c[1])*Math.cos(a)];
+  // Same geometry as the canvas: the rotate handle sits above the rotated box, in screen space.
+  const handle=()=>{const e=panel.doc.elements[0],[x,y,w,h]=e.rect,a=(Number(e.rotation)||0)*Math.PI/180,cx=x+w/2,cy=y+h/2;
+    const cs=[[x,y],[x+w,y],[x+w,y+h],[x,y+h]].map(p=>rot(p,[cx,cy],a)),xs=cs.map(p=>p[0]),ys=cs.map(p=>p[1]);
+    return [(Math.min(...xs)+Math.max(...xs))/2+90,Math.max(Math.min(...ys)-22,6-70)+70];};
+  const spin=async(from,to)=>{const layer=nodes(panel.render()).find(n=>n.props?.role==='img');
+    layer.props.onPointerDown(ev(...from));layer.props.onPointerMove(ev(...to));await layer.props.onPointerUp(ev(...to));await tick();};
+  await spin(handle(),[300,120]);
   const first=panel.calls.at(-1)[1].ops[0];
   assert.equal(first.type,'update');
   assert.ok(Math.abs(first.patch.rotation-90)<1);
-  await spin([200,60],[300,120])();
+  await spin(handle(),[300,120]);
   const second=panel.calls.at(-1)[1].ops[0];
   assert.equal(second.type,'update','the second rotation also commits');
   assert.ok(Math.abs(second.patch.rotation-180)<1,'the angle accumulates');
@@ -208,15 +211,16 @@ test('repeated resizes keep a usable minimum size',async()=>{
   let tree=panel.render();
   tree.props.onKeyDown(key('r'));
   await gesture(panel,[[100,100],[300,200]]);
-  const ev=(x,y,target)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
-    target:{getAttribute:name=>name==='data-resize'?target:null},
-    preventDefault(){},stopPropagation(){},
+  const ev=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
     currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+  const se=()=>{const e=panel.doc.elements[0];return[(e.rect[0]+e.rect[2])+90,(e.rect[1]+e.rect[3])+70];};
   for(let i=0;i<3;i++){
-    const layer=nodes(panel.render()).find(n=>n.props?.className==='ic-handles');
-    layer.props.onPointerDown(ev(300,200,'se'));
-    layer.props.onPointerMove(ev(120,120));
-    await layer.props.onPointerUp(ev(120,120));
+    const layer=nodes(panel.render()).find(n=>n.props?.role==='img');
+    const [hx,hy]=se();
+    layer.props.onPointerDown(ev(hx,hy));
+    layer.props.onPointerMove(ev(hx-220,hy-140));
+    await layer.props.onPointerUp(ev(hx-220,hy-140));
     await tick();
   }
   const op=panel.calls.at(-1)[1].ops[0];
@@ -231,18 +235,88 @@ test('dragging the rotation handle stores an angle',async()=>{
   tree.props.onKeyDown(key('p'));
   await gesture(panel,[[100,100],[200,120],[300,140]]);
   tree=panel.render();
-  const layer=nodes(tree).find(n=>n.props?.className==='ic-handles');
+  const layer=nodes(tree).find(n=>n.props?.role==='img');
   const ev=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
-    target:{getAttribute:name=>name==='data-rotate'?'1':null},
-    preventDefault(){},stopPropagation(){},
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
     currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
-  layer.props.onPointerDown(ev(200,60));
+  layer.props.onPointerDown(ev(200,78));
   layer.props.onPointerMove(ev(300,120));
   await layer.props.onPointerUp(ev(300,120));
   await tick();
   const op=panel.calls.at(-1)[1].ops[0];
   assert.equal(op.type,'update');
   assert.ok(Math.abs(op.patch.rotation-90)<1,'rotation reaches 90 degrees');
+});
+
+test('shift constrains new shapes, moves and corner resizes',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  const surface=()=>nodes(panel.render()).find(n=>n.props?.role==='img').props;
+  const ev=(x,y,shiftKey=false)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey,
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
+    currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+
+  tree.props.onKeyDown(key('r'));
+  let el=surface();
+  el.onPointerDown(ev(100,100));
+  el.onPointerMove(ev(300,200,true));
+  await el.onPointerUp(ev(300,200,true));
+  await tick();
+  const created=panel.calls.at(-1)[1].ops[0].element;
+  assert.equal(created.rect[2],created.rect[3],'shift-drag makes a square');
+
+  tree=panel.render();
+  tree.props.onKeyDown(key('v'));
+  el=surface();
+  el.onPointerDown(ev(200,150));
+  el.onPointerMove(ev(260,300,true));
+  await el.onPointerUp(ev(260,300,true));
+  await tick();
+  const moved=panel.calls.at(-1)[1].ops[0];
+  assert.equal(moved.type,'move');
+  assert.equal(moved.dx,0,'shift-move locks to the dominant axis');
+  assert.ok(moved.dy>0);
+
+  panel.render();
+  const e=panel.doc.elements[0],ratio=e.rect[2]/e.rect[3],se=[e.rect[0]+e.rect[2]+90,e.rect[1]+e.rect[3]+70];
+  el=surface();
+  el.onPointerDown(ev(...se));
+  el.onPointerMove(ev(se[0]+100,se[1]+200,true));
+  await el.onPointerUp(ev(se[0]+100,se[1]+200,true));
+  await tick();
+  const resized=panel.calls.at(-1)[1].ops[0];
+  assert.equal(resized.type,'resize');
+  assert.ok(Math.abs(resized.rect[2]/resized.rect[3]-ratio)<.01,'shift-resize keeps the original aspect ratio');
+});
+
+test('editing one shape does not leak its style into the next shape',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('r'));
+  tree=panel.render();
+  await gesture(panel,[[100,100],[220,180]]);
+  const first=panel.calls.at(-1)[1].ops[0].element;
+  tree=panel.render();
+  const swatchOf=tree=>nodes(button(tree,'Border color')).find(n=>n.props?.className==='ic-swatch ic-swatch-mini')?.props?.style?.background;
+  assert.equal(swatchOf(tree),'#356c59','the selected shape shows its own border colour');
+  button(tree,'Border color').props.onClick();
+  tree=panel.render();
+  nodes(tree).find(n=>n.type==='button'&&n.props?.['aria-label']==='#e03131').props.onClick();
+  await tick();
+  const update=panel.calls.at(-1)[1].ops[0];
+  assert.equal(update.type,'update');
+  assert.equal(update.patch.stroke,'#e03131');
+  assert.equal(update.id,first.id);
+  tree=panel.render();
+  assert.equal(swatchOf(tree),'#e03131','the edited shape reflects its new colour');
+  await gesture(panel,[[300,100],[420,180]]);
+  const second=panel.calls.at(-1)[1].ops[0];
+  assert.equal(second.type,'create');
+  assert.equal(second.element.stroke,'#356c59','the next shape keeps the tool default');
+  tree=panel.render();
+  assert.equal(swatchOf(tree),'#356c59','the new shape shows its own default colour');
 });
 
 test('the fill toggle fills new shapes',async()=>{
@@ -297,6 +371,107 @@ test('right-click opens a canvas menu with copy and paste',async()=>{
   assert.ok(items.some(t=>/Paste|粘贴/.test(t)),'offers paste');
 });
 
+test('the context menu groups only a multi-selection',async()=>{
+  const rect=(id,x)=>({id,kind:'rect',rect:[x,0,50,50],stroke:'#356c59',strokeWidth:2,fill:'none'});
+  const panel=harness({elements:[rect('a',0),rect('b',100)]});
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('a',{ctrlKey:true}));
+  tree=panel.render();
+  const canvas=nodes(tree).find(n=>n.props?.role==='img').props;
+  canvas.onContextMenu({clientX:500,clientY:400,preventDefault(){}});
+  tree=panel.render();
+  const group=nodes(tree).find(n=>n.props?.role==='menuitem'&&/Group|编组/.test(text(n)));
+  assert.ok(group,'group item exists');
+  assert.equal(group.props.disabled,false,'two selected roots can be grouped');
+  group.props.onClick();
+  await tick();
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'group');
+  assert.equal(op.ids.length,2);
+});
+
+test('the context menu keeps Group disabled for a single selection',async()=>{
+  const panel=harness({elements:[{id:'a',kind:'rect',rect:[0,0,50,50],stroke:'#356c59',strokeWidth:2,fill:'none'}]});
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('a',{ctrlKey:true}));
+  tree=panel.render();
+  const canvas=nodes(tree).find(n=>n.props?.role==='img').props;
+  canvas.onContextMenu({clientX:500,clientY:400,preventDefault(){}});
+  tree=panel.render();
+  const group=nodes(tree).find(n=>n.props?.role==='menuitem'&&/Group|编组/.test(text(n)));
+  assert.equal(group.props.disabled,true,'a single element cannot be grouped');
+});
+
+test('the context menu ungroups a selected group',async()=>{
+  const panel=harness({elements:[
+    {id:'g',kind:'group',rect:[0,0,100,100],stroke:'#356c59',strokeWidth:2,fill:'none'},
+    {id:'c',kind:'rect',parent:'g',rect:[0,0,100,100],stroke:'#356c59',strokeWidth:2,fill:'none'}
+  ]});
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('a',{ctrlKey:true}));
+  tree=panel.render();
+  const canvas=nodes(tree).find(n=>n.props?.role==='img').props;
+  canvas.onContextMenu({clientX:500,clientY:400,preventDefault(){}});
+  tree=panel.render();
+  const ungroup=nodes(tree).find(n=>n.props?.role==='menuitem'&&/Ungroup|取消编组/.test(text(n)));
+  assert.ok(ungroup,'ungroup item exists');
+  assert.equal(ungroup.props.disabled,false,'a selected group can be ungrouped');
+  ungroup.props.onClick();
+  await tick();
+  assert.equal(panel.calls.at(-1)[1].ops[0].type,'ungroup');
+});
+
+test('right-clicking an unselected group selects it before showing the menu',async()=>{
+  const panel=harness({elements:[
+    {id:'g',kind:'group',rect:[0,0,100,100],stroke:'#356c59',strokeWidth:2,fill:'none'},
+    {id:'c',kind:'rect',parent:'g',rect:[0,0,100,100],stroke:'#356c59',strokeWidth:2,fill:'none'}
+  ]});
+  await tick();
+  let tree=panel.render();
+  const canvas=nodes(tree).find(n=>n.props?.role==='img').props;
+  canvas.onContextMenu({clientX:150,clientY:120,preventDefault(){}});
+  tree=panel.render();
+  const ungroup=nodes(tree).find(n=>n.props?.role==='menuitem'&&/Ungroup|取消编组/.test(text(n)));
+  assert.equal(ungroup.props.disabled,false,'the clicked group became the selection');
+});
+
+test('pasting an image from the system clipboard creates an editable image element',async()=>{
+  const png='data:image/png;base64,'+'A'.repeat(60);
+  class FakeImage{constructor(){this.naturalWidth=200;this.naturalHeight=100;}set src(value){this._src=value;Promise.resolve().then(()=>this.onload&&this.onload());}get src(){return this._src;}}
+  class FakeFileReader{readAsDataURL(blob){this.result=blob.dataUrl;Promise.resolve().then(()=>this.onload&&this.onload());}}
+  const panel=harness({globals:{
+    navigator:{clipboard:{read:async()=>[{types:['image/png'],getType:async()=>({dataUrl:png})}]}},
+    Image:FakeImage,FileReader:FakeFileReader
+  }});
+  await tick();
+  let tree=panel.render();
+  nodes(tree).find(n=>n.props?.role==='img').props.onContextMenu({clientX:200,clientY:150,preventDefault(){}});
+  tree=panel.render();
+  const paste=nodes(tree).filter(n=>n.props?.role==='menuitem').find(n=>/Paste|粘贴/.test(text(n)));
+  assert.ok(paste,'paste menu item exists');
+  paste.props.onClick();
+  for(let i=0;i<6;i++)await tick();
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'create');
+  assert.equal(op.element.kind,'image');
+  assert.equal(op.element.src,png);
+  assert.deepEqual(op.element.rect.slice(2),[200,100],'natural size is kept for small images');
+});
+
+test('image elements paint through drawImage after they decode',async()=>{
+  const png='data:image/png;base64,'+'A'.repeat(60),drawn=[];
+  const ctx=new Proxy({drawImage:(...args)=>{drawn.push(args);}},{get:(target,key)=>key in target?target[key]:()=>{},set:(target,key,value)=>{target[key]=value;return true;}});
+  class FakeImage{constructor(){this.naturalWidth=200;this.naturalHeight=100;}set src(value){this._src=value;Promise.resolve().then(()=>this.onload&&this.onload());}get src(){return this._src;}}
+  const panel=harness({elements:[{id:'img',kind:'image',rect:[10,20,200,100],src:png}],canvasContext:ctx,globals:{Image:FakeImage}});
+  await tick();panel.render();panel.flush();
+  for(let i=0;i<4;i++)await tick();
+  assert.ok(drawn.length,'decoded images are drawn');
+  assert.deepEqual(drawn.at(-1).slice(1),[10,20,200,100]);
+});
+
 test('the text editor sets font size and colour on new text',async()=>{
   const panel=harness();
   await tick();
@@ -331,6 +506,73 @@ test('the numbers toggle switches the badges off and on',async()=>{
   on.props.onClick();
   tree=panel.render();
   assert.equal(button(tree,'Numbers').props['aria-pressed'],false);
+});
+
+test('coalesced pointer samples and stylus pressure reach the stroke',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  tree=panel.render();
+  const surface=nodes(tree).find(n=>n.props?.role==='img').props;
+  const ev=(x,y,extra={})=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,pointerType:'pen',pressure:.5,
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
+    currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false},...extra});
+  surface.onPointerDown(ev(100,100,{pressure:.2}));
+  surface.onPointerMove(ev(150,120,{pressure:.7,getCoalescedEvents:()=>[
+    {clientX:120,clientY:105,pointerType:'pen',pressure:.35},
+    {clientX:138,clientY:113,pointerType:'pen',pressure:.55}]}));
+  await surface.onPointerUp(ev(180,130,{pressure:.8}));
+  await tick();
+  const element=panel.calls.at(-1)[1].ops[0].element;
+  assert.ok(element.points.length>=4,'sub-frame coalesced samples are kept');
+  assert.equal(element.pressures?.length,element.points.length);
+  assert.ok(element.pressures.some(value=>value<.45),'stylus pressure is stored');
+  assert.ok(element.pressures.every(value=>value>=.05&&value<=1));
+});
+
+test('an idle host re-render does not repaint an unchanged canvas',async()=>{
+  const calls={};
+  const ctx=new Proxy({}, {get:(target,key)=>key in target?target[key]:(...args)=>{calls[key]=(calls[key]||0)+1;},
+    set:(target,key,value)=>{target[key]=value;return true;}});
+  const panel=harness({canvasContext:ctx});
+  await tick();
+  panel.render();panel.flush();
+  const first=calls.clearRect||0;
+  assert.ok(first>0,'the first frame paints');
+  panel.render();panel.flush();
+  assert.equal(calls.clearRect||0,first,'an unchanged React render skips the bitmap upload');
+  panel.flush();
+  assert.equal(calls.clearRect||0,first);
+});
+
+test('a host theme change repaints the cached layers',async()=>{
+  let bg='#f5f5f2';
+  const calls={};
+  const ctx=new Proxy({}, {get:(target,key)=>key in target?target[key]:(...args)=>{calls[key]=(calls[key]||0)+1;},
+    set:(target,key,value)=>{target[key]=value;return true;}});
+  const panel=harness({canvasContext:ctx,globals:{getComputedStyle:()=>({getPropertyValue:name=>name==='--ic-bg'?bg:'',})}});
+  await tick();
+  panel.render();panel.flush();
+  const first=calls.clearRect||0;
+  assert.ok(first>0);
+  bg='#101010';
+  panel.render();panel.flush();
+  assert.ok((calls.clearRect||0)>first,'a theme change must not stay cached');
+});
+
+test('the canvas is split into a scene bitmap and an event overlay',async()=>{
+  const panel=harness();
+  await tick();
+  const tree=panel.render();
+  const scene=nodes(tree).find(n=>n.props?.className==='ic-canvas ic-scene');
+  const overlay=nodes(tree).find(n=>n.props?.className==='ic-canvas ic-overlay');
+  assert.ok(scene,'scene layer exists');
+  assert.ok(overlay,'overlay layer exists');
+  assert.equal(scene.props['aria-hidden'],'true');
+  assert.equal(scene.props.onPointerDown,undefined,'the scene layer never receives pointers');
+  assert.equal(overlay.props.role,'img');
+  assert.equal(typeof overlay.props.onPointerDown,'function');
 });
 
 test('rotate mode turns any drag into a rotation and repeats',async()=>{
@@ -434,6 +676,82 @@ test('shape style controls update the selected shape',async()=>{
   assert.equal(op.id,created.element.id);
 });
 
+test('the semicircle exposes the same shape style controls',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  button(tree,'Semicircle').props.onClick();
+  tree=panel.render();
+  await gesture(panel,[[100,100],[300,220]]);
+  const created=panel.calls.at(-1)[1].ops[0].element;
+  assert.equal(created.semi,true,'new semicircles are marked as shapes');
+  tree=panel.render();
+  tree.props.onKeyDown(key('v'));
+  tree=panel.render();
+  assert.ok(button(tree,'Border color'),'the selected semicircle offers border colour');
+  assert.ok(button(tree,'Border width'),'the selected semicircle offers border width');
+  assert.ok(button(tree,'Fill'),'the selected semicircle offers fill');
+});
+
+test('legacy semicircle paths are recognised without the marker',async()=>{
+  const points=[];
+  for(let i=0;i<=32;i++){const a=Math.PI+Math.PI*i/32;points.push([50+50*Math.cos(a),50+50*Math.sin(a)]);}
+  const panel=harness({elements:[{id:'s',kind:'path',rect:[0,0,100,50],points,stroke:'#356c59',strokeWidth:2,fill:'none'}]});
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('a',{ctrlKey:true}));
+  tree=panel.render();
+  assert.ok(button(tree,'Border color'),'the 33-point half disc is treated as a shape');
+});
+
+test('a selected pen stroke exposes stroke style controls without fill',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  tree=panel.render();
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  const created=panel.calls.at(-1)[1].ops[0].element;
+  tree=panel.render();
+  tree.props.onKeyDown(key('v'));
+  tree=panel.render();
+  assert.ok(button(tree,'Border color'),'the selected stroke offers stroke colour');
+  assert.ok(button(tree,'Border width'),'the selected stroke offers stroke width');
+  assert.equal(button(tree,'Fill'),undefined,'an open stroke has no fill control');
+  button(tree,'Border color').props.onClick();
+  tree=panel.render();
+  nodes(tree).find(n=>n.type==='button'&&n.props?.['aria-label']==='#e03131').props.onClick();
+  await tick();
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'update');
+  assert.equal(op.id,created.id);
+  assert.equal(op.patch.stroke,'#e03131');
+});
+
+test('eraser radius follows the live zoom',async()=>{
+  const panel=harness({elements:[{id:'ink',kind:'path',rect:[0,0,400,300],points:[[0,0],[400,300]],stroke:'#356c59',strokeWidth:2,fill:'none'}]});
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('e'));
+  tree=panel.render();
+  button(tree,'Zoom in').props.onClick();
+  await tick();
+  await gesture(panel,[[100,100],[200,120]]);
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'erasePath');
+  assert.ok(Math.abs(op.radius-14/1.2)<1e-9,'the committed radius is screen-constant');
+});
+
+test('fragment erase leaves filled shapes to whole erase',async()=>{
+  const panel=harness({elements:[{id:'box',kind:'rect',rect:[0,0,200,100],stroke:'#356c59',strokeWidth:2,fill:'#cfe3d5'}]});
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('e'));
+  tree=panel.render();
+  await gesture(panel,[[200,120],[260,130]]);
+  assert.equal(panel.calls.filter(call=>call[0].endsWith('/apply')).length,0,'a filled shape is not fragmented by the eraser');
+});
+
 test('whole erase removes everything it touches in one operation',async()=>{
   const panel=harness();
   await tick();
@@ -453,18 +771,17 @@ test('whole erase removes everything it touches in one operation',async()=>{
   assert.equal(op.ids.length,1);
 });
 
-test('dragging a selection handle resizes through the handle layer',async()=>{
+test('dragging a canvas handle resizes the selection',async()=>{
   const panel=harness();
   await tick();
   let tree=panel.render();
   tree.props.onKeyDown(key('p'));
   await gesture(panel,[[100,100],[200,120],[300,140]]);
   tree=panel.render();
-  const layer=nodes(tree).find(n=>n.props?.className==='ic-handles');
-  assert.ok(layer,'handle layer renders above the canvas');
+  const layer=nodes(tree).find(n=>n.props?.role==='img');
+  assert.ok(layer,'the overlay owns hit-testing and drawing');
   const handleEvent=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
-    target:{getAttribute:name=>name==='data-resize'?'se':null},
-    preventDefault(){},stopPropagation(){},
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
     currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
   layer.props.onPointerDown(handleEvent(300,140));
   layer.props.onPointerMove(handleEvent(400,200));
@@ -476,15 +793,41 @@ test('dragging a selection handle resizes through the handle layer',async()=>{
   assert.ok(op.rect[3]>40,'height grows with the drag');
 });
 
-test('selection exposes eight directional handles',async()=>{
-  const panel=harness();
+test('selection exposes eight grabbable directional handles',async()=>{
+  const directions={nw:[100,100],n:[200,100],ne:[300,100],e:[300,150],se:[300,200],s:[200,200],sw:[100,200],w:[100,150]};
+  for(const [hd,[hx,hy]] of Object.entries(directions)){
+    const panel=harness();
+    await tick();
+    const first=panel.render();
+    first.props.onKeyDown(key('r'));
+    await gesture(panel,[[100,100],[300,200]]);
+    const layer=nodes(panel.render()).find(n=>n.props?.role==='img');
+    const ev=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
+      target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
+      currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+    layer.props.onPointerDown(ev(hx,hy));
+    layer.props.onPointerMove(ev(hx+12,hy+12));
+    await layer.props.onPointerUp(ev(hx+12,hy+12));
+    await tick();
+    assert.equal(panel.calls.at(-1)[1].ops[0].type,'resize',`${hd} starts a resize`);
+  }
+});
+
+test('the marquee stays one screen pixel regardless of the shape border width',async()=>{
+  const widths=[];let lw=0;
+  const ctx=new Proxy({}, {get:(target,key)=>{if(key==='lineWidth')return lw;if(key==='strokeRect')return()=>widths.push(lw);return key in target?target[key]:()=>{};},
+    set:(target,key,value)=>{if(key==='lineWidth')lw=value;target[key]=value;return true;}});
+  const panel=harness({canvasContext:ctx});
   await tick();
-  let tree=panel.render();
-  tree.props.onKeyDown(key('p'));
-  await gesture(panel,[[100,100],[200,120],[300,140]]);
-  tree=panel.render();
-  const handles=nodes(tree).filter(n=>n.props?.['data-resize']).map(n=>n.props['data-resize']).sort();
-  assert.deepEqual(handles,['e','n','ne','nw','s','se','sw','w']);
+  const tree=panel.render();
+  const surface=nodes(tree).find(n=>n.props?.role==='img').props;
+  const ev=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
+    currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+  surface.onPointerDown(ev(100,100));
+  surface.onPointerMove(ev(300,200));
+  assert.ok(widths.length,'the marquee is painted');
+  assert.equal(widths.at(-1),1,'the marquee ignores the current border width');
 });
 
 test('pointing at a tool shows its name and shortcut',async()=>{
@@ -513,6 +856,85 @@ test('the semicircle tool draws a half disc from a drag',async()=>{
   assert.equal(op.element.points.length,33);
   assert.ok(op.element.rect[2]>200,'the drag width becomes the diameter');
   assert.ok(Math.abs(op.element.rect[3]-120)<2,'the drag height becomes the radius');
+});
+
+test('the semicircle tool sits directly below the ellipse tool',async()=>{
+  const panel=harness();
+  await tick();
+  const rail=nodes(panel.render()).find(n=>n.props?.role==='toolbar'&&n.props?.['aria-label']==='Canvas');
+  const order=['Select','Pan','Pen','Erase','Text','Rectangle','Ellipse','Semicircle','Arrow','Note','Lasso'];
+  const labels=nodes(rail).filter(n=>n.type==='button'&&order.includes(n.props?.['aria-label'])).map(n=>n.props['aria-label']);
+  assert.deepEqual(labels,order);
+});
+
+test('Open on the current document re-reads it instead of doing nothing',async()=>{
+  const panel=harness();
+  await tick();
+  const open=button(panel.render(),'Reload');
+  assert.ok(open,'the current document offers a reload action');
+  const before=panel.calls.length;
+  open.props.onClick();
+  await tick();await tick();
+  const reads=panel.calls.slice(before).filter(call=>call[0].endsWith('/read'));
+  assert.equal(reads.length,1,'the button issues a fresh read');
+  assert.equal(reads[0][1].sinceSeq,undefined,'a forced read bypasses the version acknowledgement');
+});
+
+test('editing the document field opens that board',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  const input=nodes(tree).find(n=>n.props?.['aria-label']==='Document');
+  input.props.onChange({target:{value:'board-2'}});
+  tree=panel.render();
+  button(tree,'Open').props.onClick();
+  tree=panel.render();panel.flush();
+  await tick();
+  assert.ok(panel.calls.some(call=>call[0].endsWith('/read')&&call[1].doc==='board-2'),'the new board is read');
+});
+
+test('the bottom More actions menu survives pointerdown and applies its item',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  tree=panel.render();
+  tree.props.onKeyDown(key('v'));
+  tree=panel.render();
+  button(tree,'More actions').props.onClick();
+  tree=panel.render();panel.flush();
+  assert.ok(button(tree,'Rotate left'),'the menu opened');
+  panel.dispatch('pointerdown',{target:{closest:selector=>selector==='.ic-more-wrap'?'div':null}});
+  tree=panel.render();panel.flush();
+  assert.ok(button(tree,'Rotate left'),'pointerdown inside the menu must not close it');
+  button(tree,'Rotate left').props.onClick();
+  await tick();
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'update');
+  assert.equal(op.patch.rotation,270);
+});
+
+test('the export control uses a larger icon',async()=>{
+  const panel=harness();
+  await tick();
+  const control=button(panel.render(),'Export PNG');
+  assert.equal(control.props.style.width,38);
+  assert.ok(nodes(control).some(n=>n.props?.kind==='image'&&n.props?.size===23),'the glyph is larger');
+});
+
+test('the document field explains itself, is wider and has an empty placeholder',async()=>{
+  const panel=harness();
+  await tick();
+  const tree=panel.render();
+  const input=nodes(tree).find(n=>n.props?.['aria-label']==='Document');
+  assert.equal(input.props.placeholder,'Please enter the canvas id to open');
+  assert.match(input.props.title,/defaults to this session/);
+  assert.match(String(input.props.style.width),/clamp/);
+  assert.equal(button(tree,'Reload').props.title,'Re-read this canvas from the server');
+  input.props.onChange({target:{value:''}});
+  const cleared=panel.render();
+  assert.equal(button(cleared,'Open').props.disabled,true,'an empty id cannot be opened');
 });
 
 test('clearing the board needs a second click and submits one clear operation',async()=>{

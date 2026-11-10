@@ -67,6 +67,20 @@ test('Host releases its domain if registration fails', async () => {
   assert.equal(mounted.closes(), 1);
 });
 
+test('AI tools omit image bytes while the UI route keeps them', async () => {
+  const mounted = context();
+  await plugin.apply(mounted.ctx);
+  const apply = mounted.tools.get('canvas_apply'), read = mounted.tools.get('canvas_read');
+  const src = 'data:image/png;base64,' + 'A'.repeat(64);
+  const created = JSON.parse(await apply.execute({ baseVersion: 0, ops: [{ type: 'create', element: { id: 'shot', kind: 'image', rect: [0, 0, 100, 50], src } }] }, execution));
+  assert.equal(created.document.elements[0].kind, 'image');
+  assert.equal(created.document.elements[0].src, '[image data omitted]');
+  assert.equal(JSON.parse(await read.execute({}, execution)).document.elements[0].src, '[image data omitted]');
+  const route = mounted.routes.get('/api/intent-canvas/read');
+  const ui = await (await route.fetch(new Request('http://localhost/api/intent-canvas/read', { method: 'POST', body: JSON.stringify({ doc: 's-host-test' }) }))).json();
+  assert.equal(ui.document.elements[0].src, src);
+});
+
 test('UI and AI adapters share versions and enforce trusted human approval', async () => {
   const mounted = context();
   await plugin.apply(mounted.ctx);
