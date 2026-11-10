@@ -348,6 +348,45 @@ window.__ModuleLoader__.load({
             if(near)break;}
           if(near)ids.add(e.id);}
         return roots([...ids]);};
+      // Local copy of the engine's capsule split: the eraser result is painted on release instead of after the durable write.
+      const eLerp=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
+      const eDot=(a,b)=>a[0]*b[0]+a[1]*b[1];
+      const eSub=(a,b)=>[a[0]-b[0],a[1]-b[1]];
+      const eDist2=(p,a,b)=>{const v=eSub(b,a),l=eDot(v,v),t=l?Math.max(0,Math.min(1,eDot(eSub(p,a),v)/l)):0,q=eSub(p,eLerp(a,b,t));return eDot(q,q);};
+      const eraseOutline=e=>{const [x,y,w,h]=e.rect;if(e.kind==='ellipse'||e.kind==='circle'){const cx=x+w/2,cy=y+h/2,rx=w/2,ry=h/2,pts=[];for(let i=0;i<=64;i++){const a=Math.PI*2*i/64;pts.push([cx+rx*Math.cos(a),cy+ry*Math.sin(a)]);}return pts;}return [[x,y],[x+w,y],[x+w,y+h],[x,y+h],[x,y]];};
+      const eraseSplit=(poly,sweep,radius)=>{const capsules=sweep.length===1?[[sweep[0],sweep[0]]]:sweep.slice(1).map((p,i)=>[sweep[i],p]);
+        if(Math.max(1,poly.length-1)*capsules.length>250000)return null;
+        const inside=p=>capsules.some(([a,b])=>eDist2(p,a,b)<radius*radius-1e-10);
+        if(poly.length===1)return inside(poly[0])?[]:[poly];
+        if(poly.every(p=>p[0]===poly[0][0]&&p[1]===poly[0][1]))return inside(poly[0])?[]:[poly];
+        const fragments=[];let current=[],removed=false;const flush=()=>{if(current.length>1)fragments.push(current);current=[];};
+        for(let i=1;i<poly.length;i++){const a=poly[i-1],b=poly[i],v=eSub(b,a),vv=eDot(v,v),ts=[0,1];
+          if(vv===0)continue;
+          for(const [c,end] of capsules){
+            for(const center of [c,end]){const q=eSub(a,center),qb=2*eDot(q,v),qc=eDot(q,q)-radius*radius,disc=qb*qb-4*vv*qc;
+              if(disc>=0)for(const t of [(-qb-Math.sqrt(disc))/(2*vv),(-qb+Math.sqrt(disc))/(2*vv)])if(t>0&&t<1)ts.push(t);}
+            const axis=eSub(end,c),length=Math.hypot(...axis);
+            if(length){const n=[-axis[1]/length,axis[0]/length],den=eDot(v,n);
+              if(den)for(const sign of [-1,1]){const t=(sign*radius-eDot(eSub(a,c),n))/den;if(t>0&&t<1)ts.push(t);}}
+          }
+          ts.sort((x,y)=>x-y);
+          for(let j=1;j<ts.length;j++){const lo=ts[j-1],hi=ts[j];if(hi-lo<1e-12)continue;
+            if(inside(eLerp(a,b,(lo+hi)/2))){removed=true;flush();}
+            else{if(!current.length)current.push(eLerp(a,b,lo));current.push(eLerp(a,b,hi));}}
+        }
+        flush();return removed?fragments:[poly];};
+      const eraseLocally=(d0,ids,sweep,radius)=>{const elements=d0.elements.slice();
+        for(const id of ids){const idx=elements.findIndex(e=>e.id===id);if(idx<0)continue;const e=elements[idx];
+          const world=e.kind==='path'?e.points.map(([x,y])=>[x+e.rect[0],y+e.rect[1]]):eraseOutline(e);
+          const parts=eraseSplit(world,sweep,radius+(Number(e.strokeWidth)||0)/2);
+          if(!parts)return null;
+          if(JSON.stringify(parts)===JSON.stringify([world]))continue;
+          elements.splice(idx,1);
+          const base=e.kind==='path'?{...e}:{...e,kind:'path',fill:'none'};
+          const replacements=parts.map((ps,i)=>{const x=Math.min(...ps.map(p=>p[0])),y=Math.min(...ps.map(p=>p[1]));
+            return {...base,id:i===0?e.id:uid(),rect:[x,y,Math.max(...ps.map(p=>p[0]))-x,Math.max(...ps.map(p=>p[1]))-y],points:ps.map(p=>[p[0]-x,p[1]-y]),...(e.kind==='path'?{}:{sharp:true})};});
+          elements.splice(idx,0,...replacements);}
+        return {...d0,elements};};
       const pointerUp=async e=>{const g=live.current.gesture;if(!g||g.frozen)return;dropQueuedGesture();
         if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);
         const commits=['pen','erase','move','rotate','resize','rect','ellipse','arrow','semi'].includes(g.kind);
@@ -357,7 +396,12 @@ window.__ModuleLoader__.load({
         if(commits){live.current.gesture=frozen;}else{live.current.gesture=null;queuePaint();}
         if(g.kind==='pan'){return;}
         if(g.kind==='erase'){
-          if(eraseWhole){const ids=eraserHits(g.points);if(ids.length){const r=await commit([{type:'delete',ids}]);finished(!!r);}else finished(false);return;}
+          if(eraseWhole){const ids=eraserHits(g.points);if(ids.length){
+            const before=live.current.doc,remove=new Set(ids);let grew=true;
+            while(grew){grew=false;for(const e of before.elements){if(e.parent&&remove.has(e.parent)&&!remove.has(e.id)){remove.add(e.id);grew=true;}}}
+            live.current.doc={...before,elements:before.elements.filter(e=>!remove.has(e.id))};live.current.gesture=null;setDoc(live.current.doc);queuePaint();
+            const r=await commit([{type:'delete',ids}]);if(!r){live.current.doc=before;setDoc(before);queuePaint();}finished(!!r);
+          }else finished(false);return;}
           // Fragment erase is for freehand ink and hollow outlines; filled shapes are whole-erase targets, not cuttable fragments.
           const z=live.current.view?.z||1,pr=radius/z;
           let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
@@ -368,7 +412,12 @@ window.__ModuleLoader__.load({
             if(doc.elements.some(e=>!e.parent&&near(e)&&['rect','ellipse','semi','note'].includes(e.kind)&&e.fill&&e.fill!=='none'))toast.push(t('Filled shapes use Whole erase'));
             finished(false);return;
           }
-          const r=await commit([{type:'erasePath',ids:fragIds,points:g.points,radius:radius/z}]);finished(!!r);return;
+          // Show the cut at once; the durable write reconciles behind it instead of holding the screen for ~150ms.
+          const before=live.current.doc,optimistic=eraseLocally(before,fragIds,g.points,pr);
+          if(optimistic){live.current.doc=optimistic;live.current.gesture=null;setDoc(optimistic);queuePaint();}
+          const r=await commit([{type:'erasePath',ids:fragIds,points:g.points,radius:pr}]);
+          if(!r&&optimistic){live.current.doc=before;setDoc(before);queuePaint();}
+          finished(!!r);return;
         }
         if(g.kind==='move'){const dx=g.end[0]-g.start[0],dy=g.end[1]-g.start[1];if(dx||dy){const r=await commit([{type:'move',ids:g.ids,dx,dy}]);finished(!!r);}else finished(false);return;}
         if(g.kind==='rotate'){if(Math.abs(g.angle)>0.05){const liveDoc=live.current.doc||doc;const ops=g.ids.map(id=>{const cur=liveDoc.elements.find(x=>x.id===id);const next=(((Number(cur?.rotation)||0)+g.angle)%360+360)%360;return {type:'update',id,patch:{rotation:Math.round(next*10)/10}};});const r=await commit(ops);finished(!!r);}else finished(false);return;}
@@ -733,7 +782,7 @@ window.__ModuleLoader__.load({
             onKeyDown:e=>{if(e.key==='Escape'){e.stopPropagation();live.current.editor=null;setEditor(null);}if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();saveEditor();}}}),h('div',{className:'ic-consult',style:{top:editor.rect[1]*eview.z+eview.y+Math.max(85,editor.rect[3]*eview.z)+10,left:editor.rect[0]*eview.z+eview.x,right:'auto',bottom:'auto',width:'auto',maxWidth:'calc(100% - 20px)',padding:'8px 10px'}},h('div',{className:'ic-actions'},h('input',{type:'color',className:'ic-color',value:editor.textColor||'#26382d',onChange:e=>{const next={...live.current.editor,textColor:e.target.value};live.current.editor=next;setEditor(next);},'aria-label':t('Text color'),title:t('Text color')}),h('select',{'aria-label':t('Font size'),title:t('Font size'),value:Number(editor.fontSize)||16,onChange:e=>{const next={...live.current.editor,fontSize:+e.target.value};live.current.editor=next;setEditor(next);}},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),button('Save',saveEditor),button('Cancel',()=>{live.current.editor=null;setEditor(null);})))),
           consult&&h('aside',{className:'ic-consult','aria-label':t('What does this circle mean?')},h('h3',null,t('What does this circle mean?')),h('p',null,t('Keep it as a drawing, make a card, or group the enclosed items. Nothing converts without your choice.')),h('div',{className:'ic-actions'},consult.id&&button('Make card',()=>consultChoice('card'),{disabled:busy}),button('Group enclosed',()=>consultChoice('group'),{disabled:busy||consult.ids.length<2}),button('Keep drawing',()=>consultChoice('ignore'))))),
         h('div',{className:'ic-top'},
-          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.1.11'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
+          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.1.12'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
           h('div',{className:'ic-float ic-tr'},button('Undo',()=>action('undo'),{disabled:busy||!doc?.history?.length}),button('Redo',()=>action('redo'),{disabled:busy||!doc?.future?.length}),button(confirmClear?'Confirm clear':'Clear canvas',clearBoard,{disabled:!doc?.elements?.length||busy,'aria-pressed':confirmClear}),button('Grid',()=>{const next=!grid;live.current.grid=next;setGrid(next);paintRef.current&&paintRef.current();},{'aria-pressed':grid}),button('Numbers',()=>{const next=!badges;live.current.badges=next;setBadges(next);paintRef.current&&paintRef.current();},{'aria-pressed':badges}),button('Fit',fit,{disabled:!doc}))),
         h('div',{className:'ic-float ic-tc ic-rail',role:'toolbar','aria-label':t('Canvas'),onMouseLeave:()=>{setTip(null);setMoreOpen(false);}},
           ...primaryTools.map(k=>toolButton(k)),
