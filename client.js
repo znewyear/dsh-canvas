@@ -191,20 +191,22 @@ window.__ModuleLoader__.load({
           }
         }catch(e){report(e);}
       };
-      const [view,setView]=useState({x:90,y:70,z:1}),[grid,setGrid]=useState(true);
+      const [grid,setGrid]=useState(true);
       const [color,setColor]=useState('#356c59'),[width,setWidth]=useState(2.5),[radius,setRadius]=useState(14),[consult,setConsult]=useState(null),[editor,setEditor]=useState(null),[comment,setComment]=useState(''),[eraseWhole,setEraseWhole]=useState(false),[fillOn,setFillOn]=useState(false),[fillColor,setFillColor]=useState('#cfe3d5'),[noteFill,setNoteFill]=useState('#f4e9ac'),[rotateMode,setRotateMode]=useState(false),[badges,setBadges]=useState(true),[penKind,setPenKind]=useState('plain'),[penPanel,setPenPanel]=useState(null),[fontSize,setFontSize]=useState(16),[textColor,setTextColor]=useState('#26382d');
-      const root=useRef(null),svg=useRef(null),sceneRef=useRef(null),live=useRef({}),clipboard=useRef(null),space=useRef(false),readSeq=useRef(0),rafRef=useRef(0),paintScope=useRef(''),paintRef=useRef(null),viewTimer=useRef(0),hoverRef=useRef(null),editorRef=useRef(null),styleTimer=useRef(0),painted=useRef({scene:'',overlay:'',w:0,h:0});
+      const viewRef=useRef({x:90,y:70,z:1});
+      const root=useRef(null),svg=useRef(null),sceneRef=useRef(null),live=useRef({}),clipboard=useRef(null),space=useRef(false),readSeq=useRef(0),rafRef=useRef(0),paintScope=useRef(''),paintRef=useRef(null),zoomLabel=useRef(null),hoverRef=useRef(null),editorRef=useRef(null),styleTimer=useRef(0),painted=useRef({scene:'',overlay:'',w:0,h:0});
       // Switching to the eraser drops every selection, so no handle layer or selection bar stays behind.
       const chooseTool=k=>{if(live.current.editor)saveEditor();cancel();setTool(k);setMoreOpen(false);setPenPanel(null);if(k==='erase'){setSelection([]);hoverRef.current=null;}};
-      // Paint straight from the refs: the browser never waits for a React commit during a gesture.
-      const syncView=()=>{if(viewTimer.current)clearTimeout(viewTimer.current);viewTimer.current=setTimeout(()=>{viewTimer.current=0;setView(live.current.view);},150);};
+      // Viewport is not React state: the canvas, chrome and cursor all read one live object, so no layer arrives late.
+      const setLiveView=next=>{live.current.view=next;viewRef.current=next;};
+      const syncZoomLabel=()=>{if(zoomLabel.current)zoomLabel.current.textContent=Math.round((live.current.view?.z||1)*100)+'%';};
       // Overlay-only frames keep the committed scene bitmap untouched while a stroke or marquee is in flight.
       const queuePaint=(scope='all')=>{if(scope==='all')paintScope.current='all';else if(!paintScope.current)paintScope.current='overlay';if(rafRef.current)return;const raf=typeof requestAnimationFrame==='function'?requestAnimationFrame:fn=>{fn();return 0;};rafRef.current=raf(()=>{rafRef.current=0;const nextScope=paintScope.current||'all';paintScope.current='';paintRef.current&&paintRef.current(true,nextScope);});};
       const dropQueuedGesture=()=>{paintScope.current='';if(!rafRef.current)return;if(typeof cancelAnimationFrame==='function')cancelAnimationFrame(rafRef.current);rafRef.current=0;};
-      useEffect(()=>()=>{clearTimeout(viewTimer.current);clearTimeout(styleTimer.current);dropQueuedGesture();live.current.gesture=null;},[docId]);
+      useEffect(()=>()=>{clearTimeout(styleTimer.current);dropQueuedGesture();live.current.gesture=null;},[docId]);
       // Decoded images arrive after the requesting frame, so every mounted panel repaints once when one loads.
       useEffect(()=>{const fn=()=>{paintRef.current&&paintRef.current(true);};repainters.add(fn);return()=>{repainters.delete(fn);};},[]);
-      live.current={doc,docId,busy,gesture:live.current.gesture,editor,selection,view,tool,color,width,radius,penKind,grid,badges};
+      live.current={doc,docId,busy,gesture:live.current.gesture,editor,selection,view:viewRef.current,tool,color,width,radius,penKind,grid,badges};
       const report=e=>setError(e?.code==='VERSION_CONFLICT'?t('Conflict: another edit arrived. Refresh, then retry your action. Your gesture was not applied.'):(e?.message||String(e)));
       const rpc=async(method,args)=>{ const send=globalThis.__DSH_TRANSPORT__?.fetch??((input,init)=>globalThis.fetch(input,init)); const response=await send(`api/intent-canvas/${method}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(args)}); if(!response.ok)throw new Error(`${t('Canvas transport failed')}: HTTP ${response.status}`); const r=await response.json(); if(!r?.ok)throw Object.assign(new Error(r?.error?.message||t('Canvas request failed')),{code:r?.error?.code}); return r; };
       const refresh=async(force=false)=>{
@@ -246,10 +248,10 @@ window.__ModuleLoader__.load({
       const centerOf=r=>[r[0]+r[2]/2,r[1]+r[3]/2];
       const localPoint=(p,e)=>{let q=p,cur=e;const chain=[];while(cur){chain.unshift(cur);cur=cur.parent?doc.elements.find(x=>x.id===cur.parent):null;}
         for(const el of chain){const a=(Number(el.rotation)||0)*Math.PI/180;if(a)q=rotPoint(q,centerOf(el.rect),-a);}return q;};
-      const pick=p=>{for(const e of [...doc.elements].reverse()){if(e.kind==='group')continue;const r=e.rect,pad=5/view.z,q=localPoint(p,e);if(!inside(q,[r[0]-pad,r[1]-pad,r[2]+pad*2,r[3]+pad*2]))continue;
+      const pick=p=>{for(const e of [...doc.elements].reverse()){if(e.kind==='group')continue;const r=e.rect,pad=5/(live.current.view?.z||1),q=localPoint(p,e);if(!inside(q,[r[0]-pad,r[1]-pad,r[2]+pad*2,r[3]+pad*2]))continue;
           if(e.kind==='path'){let near=false;const pts=e.points.map(o=>[o[0]+r[0],o[1]+r[1]]);for(let i=0;i<pts.length;i++){const a=pts[i],b=pts[Math.min(i+1,pts.length-1)],dx=b[0]-a[0],dy=b[1]-a[1],l=dx*dx+dy*dy,k=l?Math.max(0,Math.min(1,((q[0]-a[0])*dx+(q[1]-a[1])*dy)/l)):0;if(Math.hypot(q[0]-a[0]-k*dx,q[1]-a[1]-k*dy)<pad+width){near=true;break;}}if(!near)continue;}
           let top=e;while(top.parent){const parent=doc.elements.find(x=>x.id===top.parent);if(!parent)break;top=parent;}return top;}return null;};
-      const beginEditor=(element,p)=>{setEditor({id:element?.id||null,kind:element?.kind||tool,rect:element?.rect||[p[0],p[1],tool==='note'?200:180,tool==='note'?140:55],text:element?.text||'',fontSize:element?.fontSize||fontSize,textColor:element?.textColor||textColor});};
+      const beginEditor=(element,p)=>{setEditor({id:element?.id||null,kind:element?.kind||tool,rect:element?.rect||[p[0],p[1],tool==='note'?200:180,tool==='note'?140:55],text:element?.text||'',fontSize:element?.fontSize||fontSize,textColor:element?.textColor||textColor,view:{...live.current.view}});};
       // Read from the ref and clear it first, so a blur plus a click cannot commit the same text twice.
       const saveEditor=async()=>{const e=live.current.editor;if(!e)return;live.current.editor=null;setEditor(null);if(!e.text.trim()&&!e.id)return;
         setFontSize(e.fontSize||16);setTextColor(e.textColor||textColor);
@@ -277,7 +279,7 @@ window.__ModuleLoader__.load({
         // Alt-drag on a selected shape rotates too, so rotation never depends on hitting the small handle.
         else if(e.altKey&&selectionBounds&&pick(p)){const c=[selectionBounds[0]+selectionBounds[2]/2,selectionBounds[1]+selectionBounds[3]/2];
           g={kind:'rotate',center:c,ids:roots(selection),start:Math.atan2(p[1]-c[1],p[0]-c[0]),angle:0};}
-        else if(space.current||e.button===1||tool==='pan')g={kind:'pan',start:[e.clientX,e.clientY],original:view};
+        else if(space.current||e.button===1||tool==='pan')g={kind:'pan',start:[e.clientX,e.clientY],original:{...live.current.view}};
         else if(tool==='erase')g={kind:'erase',points:[p]};else if(tool==='pen'||tool==='lasso'){const pr=tool==='pen'?pressureOf(e):null;g={kind:tool,points:[p],...(pr!==null?{pressures:[pr]}:{})};}
         else if(['rect','ellipse','arrow','semi'].includes(tool))g={kind:tool,start:p,end:p};
         else if(tool==='text'||tool==='note'){beginEditor(null,p);return;}
@@ -288,7 +290,7 @@ window.__ModuleLoader__.load({
           else if(svg.current){const r=svg.current.getBoundingClientRect(),hd=hitHandleAt(e.clientX-r.left,e.clientY-r.top);
             const base=rotateMode&&selection.length?'grab':st.tool==='pan'?'grab':st.tool==='select'?'default':'crosshair';
             svg.current.style.cursor=hd?(hd==='rotate'?'grab':cursorOf(hd)):(st.tool==='select'&&pick(world(e))?'move':base);}
-          return;}let next;if(g.kind==='pan'){autoFit.current=false;live.current.view={...g.original,x:g.original.x+e.clientX-g.start[0],y:g.original.y+e.clientY-g.start[1]};queuePaint();syncView();return;}const p=world(e);if(g.kind==='rotate'){const a=Math.atan2(p[1]-g.center[1],p[0]-g.center[0]);let d=(a-g.start)*180/Math.PI;if(e.shiftKey)d=Math.round(d/15)*15;live.current.gesture={...g,angle:d};queuePaint();return;}
+          return;}let next;if(g.kind==='pan'){autoFit.current=false;setLiveView({...g.original,x:g.original.x+e.clientX-g.start[0],y:g.original.y+e.clientY-g.start[1]});queuePaint();return;}const p=world(e);if(g.kind==='rotate'){const a=Math.atan2(p[1]-g.center[1],p[0]-g.center[0]);let d=(a-g.start)*180/Math.PI;if(e.shiftKey)d=Math.round(d/15)*15;live.current.gesture={...g,angle:d};queuePaint();return;}
         if(g.points){
           // Coalesced events keep the sub-frame samples Chrome batches into one pointermove, so a fast curve stays a curve.
           const r=svg.current.getBoundingClientRect(),v=live.current.view,min=.9/Math.max(.08,v.z),cap=3000;
@@ -305,7 +307,7 @@ window.__ModuleLoader__.load({
         }
         else next={...g,end:p};live.current.gesture=next;queuePaint('overlay');};
       // Whole-stroke eraser: any element the eraser trail touches is removed in one operation.
-      const eraserHits=pts=>{const pad=radius/view.z,ids=new Set();
+      const eraserHits=pts=>{const pad=radius/(live.current.view?.z||1),ids=new Set();
         for(const e of doc.elements){if(e.kind==='group')continue;const r=e.rect;let near=false;
           for(const p of pts){if(p[0]<r[0]-pad||p[0]>r[0]+r[2]+pad||p[1]<r[1]-pad||p[1]>r[1]+r[3]+pad)continue;
             if(e.kind==='path'&&e.points?.length){
@@ -317,11 +319,11 @@ window.__ModuleLoader__.load({
             if(near)break;}
           if(near)ids.add(e.id);}
         return roots([...ids]);};
-      const pointerUp=async e=>{const g=live.current.gesture;if(!g)return;dropQueuedGesture();live.current.gesture=null;queuePaint();if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);if(g.kind==='pan'){setView(live.current.view);return;}
-        if(g.kind==='erase'){if(eraseWhole){const ids=eraserHits(g.points);if(ids.length)await commit([{type:'delete',ids}]);return;}await commit([{type:'erasePath',points:g.points,radius:radius/view.z}]);return;}
+      const pointerUp=async e=>{const g=live.current.gesture;if(!g)return;dropQueuedGesture();live.current.gesture=null;queuePaint();if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);if(g.kind==='pan'){return;}
+        if(g.kind==='erase'){if(eraseWhole){const ids=eraserHits(g.points);if(ids.length)await commit([{type:'delete',ids}]);return;}await commit([{type:'erasePath',points:g.points,radius:radius/(live.current.view?.z||1)}]);return;}
         if(g.kind==='move'){const dx=g.end[0]-g.start[0],dy=g.end[1]-g.start[1];if(dx||dy)await commit([{type:'move',ids:g.ids,dx,dy}]);return;}
         if(g.kind==='rotate'){if(Math.abs(g.angle)>0.05){const liveDoc=live.current.doc||doc;const ops=g.ids.map(id=>{const cur=liveDoc.elements.find(x=>x.id===id);const next=(((Number(cur?.rotation)||0)+g.angle)%360+360)%360;return {type:'update',id,patch:{rotation:Math.round(next*10)/10}};});await commit(ops);}return;}
-        if(g.kind==='resize'){const r=g.rect,n=resizeRect(r,g.handle,g.start,g.end);const min=8/view.z;
+        if(g.kind==='resize'){const r=g.rect,n=resizeRect(r,g.handle,g.start,g.end);const min=8/(live.current.view?.z||1);
           if(n[2]<min){n[2]=min;if(g.handle.includes('w'))n[0]=r[0]+r[2]-min;}
           if(n[3]<min){n[3]=min;if(g.handle.includes('n'))n[1]=r[1]+r[3]-min;}
           const sx=n[2]/(r[2]||1),sy=n[3]/(r[3]||1);await commit(g.ids.map(id=>{const old=doc.elements.find(e=>e.id===id).rect;return{type:'resize',id,rect:[n[0]+(old[0]-r[0])*sx,n[1]+(old[1]-r[1])*sy,Math.max(min,old[2]*sx),Math.max(min,old[3]*sy)]};}));return;}
@@ -337,9 +339,9 @@ window.__ModuleLoader__.load({
             element={id,kind:'path',rect:r,points:pts,stroke:color,strokeWidth:width,fill:fillOn?fillColor:'none'};}
         }
         if(await commit([{type:'create',element}])){setSelection([id]);let closed=false;if(g.kind==='pen'&&g.points.length>12){const r=element.rect,a=g.points[0],b=g.points[g.points.length-1];closed=r[2]>24&&r[3]>24&&Math.hypot(a[0]-b[0],a[1]-b[1])<Math.max(r[2],r[3])*.28;}if(g.kind==='ellipse'||closed){const r=element.rect,ids=doc.elements.filter(e=>!e.parent&&inside([e.rect[0]+e.rect[2]/2,e.rect[1]+e.rect[3]/2],r)).map(e=>e.id);setConsult({id,ids});}}};
-      const zoom=(factor,anchor)=>{autoFit.current=false;const v=live.current.view,z=Math.max(.08,Math.min(8,v.z*factor)),a=anchor||[svg.current.clientWidth/2,svg.current.clientHeight/2];live.current.view={x:a[0]-(a[0]-v.x)*z/v.z,y:a[1]-(a[1]-v.y)*z/v.z,z};queuePaint();syncView();};
+      const zoom=(factor,anchor)=>{autoFit.current=false;const v=live.current.view,z=Math.max(.08,Math.min(8,v.z*factor)),a=anchor||[svg.current.clientWidth/2,svg.current.clientHeight/2];setLiveView({x:a[0]-(a[0]-v.x)*z/v.z,y:a[1]-(a[1]-v.y)*z/v.z,z});queuePaint();syncZoomLabel();};
       // Fit keeps the drawing inside whichever column renders it, including the narrow right Sidebar.
-      const fit=()=>{if(!doc||!svg.current)return;const r=bounds(doc.elements.filter(e=>e.kind!=='group'));const w=svg.current.clientWidth,hh=svg.current.clientHeight;if(!w||!hh)return;if(!r){setView({x:Math.max(20,w/2-100),y:Math.max(20,hh/2-100),z:1});return;}const pad=Math.min(60,Math.max(14,w*.07));const z=Math.min(2,Math.max(.08,Math.min((w-pad*2)/(r[2]||1),(hh-pad*2)/(r[3]||1))));setView({x:w/2-(r[0]+r[2]/2)*z,y:hh/2-(r[1]+r[3]/2)*z,z});};
+      const fit=()=>{if(!doc||!svg.current)return;const r=bounds(doc.elements.filter(e=>e.kind!=='group'));const w=svg.current.clientWidth,hh=svg.current.clientHeight;if(!w||!hh)return;if(!r){setLiveView({x:Math.max(20,w/2-100),y:Math.max(20,hh/2-100),z:1});queuePaint();syncZoomLabel();return;}const pad=Math.min(60,Math.max(14,w*.07));const z=Math.min(2,Math.max(.08,Math.min((w-pad*2)/(r[2]||1),(hh-pad*2)/(r[3]||1))));setLiveView({x:w/2-(r[0]+r[2]/2)*z,y:hh/2-(r[1]+r[3]/2)*z,z});queuePaint();syncZoomLabel();};
       fitRef.current=fit;
       const cursorOf=d=>d==='nw'||d==='se'?'nwse-resize':d==='ne'||d==='sw'?'nesw-resize':d==='n'||d==='s'?'ns-resize':'ew-resize';
       // Canvas 2D scene: one bitmap repaint per frame instead of rebuilding an SVG tree on every render.
@@ -599,14 +601,14 @@ window.__ModuleLoader__.load({
       const pasteFromSystem=()=>{const cv=svg.current;if(!cv)return;if(clipboard.current){action('paste');return;}
         const v=live.current.view;void pasteAt((cv.clientWidth/2-v.x)/v.z,(cv.clientHeight/2-v.y)/v.z,true);};
       const openMenu=e=>{e.preventDefault();if(!doc)return;const r=svg.current.getBoundingClientRect();
-        const lx=e.clientX-r.left,ly=e.clientY-r.top;setMenu({x:lx,y:ly,wx:(lx-view.x)/view.z,wy:(ly-view.y)/view.z});};
+        const lx=e.clientX-r.left,ly=e.clientY-r.top,v=live.current.view;setMenu({x:lx,y:ly,wx:(lx-v.x)/v.z,wy:(ly-v.y)/v.z});};
       useEffect(()=>{if(!menu)return;const close=ev=>{if(!ev.target?.closest?.('.ic-ctx'))setMenu(null);};window.addEventListener('pointerdown',close,true);return()=>window.removeEventListener('pointerdown',close,true);},[menu]);
       useEffect(()=>{if(!selMore)return;const close=ev=>{if(!ev.target?.closest?.('.ic-more-wrap'))setSelMore(false);};window.addEventListener('pointerdown',close,true);return()=>window.removeEventListener('pointerdown',close,true);},[selMore]);
       useEffect(()=>{if(!penPanel)return;const close=ev=>{if(!ev.target?.closest?.('.ic-sel'))setPenPanel(null);};window.addEventListener('pointerdown',close,true);return()=>window.removeEventListener('pointerdown',close,true);},[penPanel]);
       useEffect(()=>{if(!selection.length)setSelMore(false);},[selection.length]);
       const keys={select:'V',pan:'H',pen:'P',erase:'E',text:'T',rect:'R',ellipse:'O',arrow:'A',note:'N',lasso:'L'};
       const hover=(k,label)=>e=>{const el=e.currentTarget;setTip({text:keys[k]?`${t(label)} · ${keys[k]}`:t(label),x:el.offsetLeft+el.offsetWidth/2,y:el.offsetTop+el.offsetHeight/2,rail:!!(el.closest&&el.closest('.ic-rail'))});};
-      const zoomPct=h('span',{className:'ic-chip','aria-live':'polite'},Math.round(view.z*100)+'%');
+      const zoomPct=h('span',{ref:zoomLabel,className:'ic-chip','aria-live':'polite'},Math.round(viewRef.current.z*100)+'%');
       const colorCard=(setter,current,after)=>h('div',{className:'ic-pen-card ic-swatches',role:'menu','aria-label':t('Color')},
         ...['#000000','#4b4b4b','#b8bcc0','#ffffff','#e03131','#f08c00','#f59f00','#fab005','#74b816','#2f9e44','#0ca678','#12b886','#1971c2','#4263eb','#7048e8','#ae3ec9','#e64980'].map(c=>h('button',{key:c,type:'button',className:'ic-swatch',style:{background:c},onClick:()=>{setter(c);if(after)after(c);setPenPanel(null);},'aria-label':c,title:c})),
         h('label',{className:'ic-swatch ic-swatch-custom',title:t('Custom color')},
@@ -620,6 +622,8 @@ window.__ModuleLoader__.load({
       const textBar=tool==='text'||(tool==='select'&&selText);
       const fillBar=strokeBar&&(selHasShape||['rect','ellipse','semi'].includes(tool));
       const noteBar=tool==='note'||(tool==='select'&&selNote);
+      // The text editor keeps its own viewport snapshot so panning/zooming the scene never rewrites the DOM box.
+      const eview=editor?.view||live.current.view;
       return h('section',{className:'ic-app',ref:root,tabIndex:0,onKeyDown:keyDown,'aria-label':t('Canvas')},
         h('div',{className:'ic-workspace'},h('canvas',{ref:sceneRef,className:'ic-canvas ic-scene','aria-hidden':'true'}),h('canvas',{ref:svg,className:'ic-canvas ic-overlay','aria-label':t('Canvas'),role:'img',onPointerDown:pointerDown,onPointerMove:pointerMove,onPointerUp:pointerUp,onPointerLeave:()=>{hoverRef.current=null;queuePaint('overlay');},onContextMenu:openMenu,onPointerCancel:()=>{live.current.gesture=null;paintRef.current&&paintRef.current();},onDoubleClick:e=>{if(!doc||busy)return;const p=world(e),hit=pick(p);if(hit&&hit.kind!=='image')beginEditor(hit,p);},onWheel:e=>{if(editor)return;const r=svg.current.getBoundingClientRect();zoom(Math.exp(-e.deltaY*.0015),[e.clientX-r.left,e.clientY-r.top]);},style:{cursor:rotateMode&&selection.length?'grab':tool==='erase'?'none':tool==='pan'?'grab':tool==='select'?'default':'crosshair'}}),
           menu&&h('div',{className:'ic-ctx',role:'menu',style:{left:menu.x,top:menu.y},onPointerDown:e=>e.stopPropagation()},
@@ -628,14 +632,14 @@ window.__ModuleLoader__.load({
             h('button',{type:'button',role:'menuitem',onClick:()=>{setMenu(null);exportPng(false);}},t('Export PNG (white)')),
             h('button',{type:'button',role:'menuitem',onClick:()=>{setMenu(null);exportPng(true);}},t('Export PNG (transparent)')),
             h('button',{type:'button',role:'menuitem',onClick:()=>setMenu(null)},t('Close'))),
-          editor&&h('div',{ref:editorRef},h('textarea',{className:'ic-editor',autoFocus:true,value:editor.text,'aria-label':t('Text content'),style:{left:editor.rect[0]*view.z+view.x,top:editor.rect[1]*view.z+view.y,width:Math.max(150,editor.rect[2]*view.z),height:Math.max(85,editor.rect[3]*view.z),fontSize:Math.max(11,(Number(editor.fontSize)||16)*view.z)+'px',color:editor.textColor||'#26382d'},onChange:e=>{const next={...live.current.editor,text:e.target.value};live.current.editor=next;setEditor(next);},onBlur:e=>{
+          editor&&h('div',{ref:editorRef},h('textarea',{className:'ic-editor',autoFocus:true,value:editor.text,'aria-label':t('Text content'),style:{left:editor.rect[0]*eview.z+eview.x,top:editor.rect[1]*eview.z+eview.y,width:Math.max(150,editor.rect[2]*eview.z),height:Math.max(85,editor.rect[3]*eview.z),fontSize:Math.max(11,(Number(editor.fontSize)||16)*eview.z)+'px',color:editor.textColor||'#26382d'},onChange:e=>{const next={...live.current.editor,text:e.target.value};live.current.editor=next;setEditor(next);},onBlur:e=>{
             // Focus moving into this editor's own controls (colour / size / buttons) must not commit and close it.
             const tgt=e?.relatedTarget;if(tgt&&editorRef.current&&editorRef.current.contains(tgt))return;
             setTimeout(()=>{const a=typeof document!=='undefined'?document.activeElement:null;if(a&&editorRef.current&&editorRef.current.contains(a))return;saveEditor();},0);},
-            onKeyDown:e=>{if(e.key==='Escape'){e.stopPropagation();live.current.editor=null;setEditor(null);}if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();saveEditor();}}}),h('div',{className:'ic-consult',style:{top:editor.rect[1]*view.z+view.y+Math.max(85,editor.rect[3]*view.z)+10,left:editor.rect[0]*view.z+view.x,right:'auto',bottom:'auto',width:'auto',maxWidth:'calc(100% - 20px)',padding:'8px 10px'}},h('div',{className:'ic-actions'},h('input',{type:'color',className:'ic-color',value:editor.textColor||'#26382d',onChange:e=>{const next={...live.current.editor,textColor:e.target.value};live.current.editor=next;setEditor(next);},'aria-label':t('Text color'),title:t('Text color')}),h('select',{'aria-label':t('Font size'),title:t('Font size'),value:Number(editor.fontSize)||16,onChange:e=>{const next={...live.current.editor,fontSize:+e.target.value};live.current.editor=next;setEditor(next);}},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),button('Save',saveEditor),button('Cancel',()=>{live.current.editor=null;setEditor(null);})))),
+            onKeyDown:e=>{if(e.key==='Escape'){e.stopPropagation();live.current.editor=null;setEditor(null);}if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();saveEditor();}}}),h('div',{className:'ic-consult',style:{top:editor.rect[1]*eview.z+eview.y+Math.max(85,editor.rect[3]*eview.z)+10,left:editor.rect[0]*eview.z+eview.x,right:'auto',bottom:'auto',width:'auto',maxWidth:'calc(100% - 20px)',padding:'8px 10px'}},h('div',{className:'ic-actions'},h('input',{type:'color',className:'ic-color',value:editor.textColor||'#26382d',onChange:e=>{const next={...live.current.editor,textColor:e.target.value};live.current.editor=next;setEditor(next);},'aria-label':t('Text color'),title:t('Text color')}),h('select',{'aria-label':t('Font size'),title:t('Font size'),value:Number(editor.fontSize)||16,onChange:e=>{const next={...live.current.editor,fontSize:+e.target.value};live.current.editor=next;setEditor(next);}},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),button('Save',saveEditor),button('Cancel',()=>{live.current.editor=null;setEditor(null);})))),
           consult&&h('aside',{className:'ic-consult','aria-label':t('What does this circle mean?')},h('h3',null,t('What does this circle mean?')),h('p',null,t('Keep it as a drawing, make a card, or group the enclosed items. Nothing converts without your choice.')),h('div',{className:'ic-actions'},consult.id&&button('Make card',()=>consultChoice('card'),{disabled:busy}),button('Group enclosed',()=>consultChoice('group'),{disabled:busy||consult.ids.length<2}),button('Keep drawing',()=>consultChoice('ignore'))))),
         h('div',{className:'ic-top'},
-          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.0.99'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
+          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.0.100'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
           h('div',{className:'ic-float ic-tr'},button('Undo',()=>action('undo'),{disabled:busy||!doc?.history?.length}),button('Redo',()=>action('redo'),{disabled:busy||!doc?.future?.length}),button(confirmClear?'Confirm clear':'Clear canvas',clearBoard,{disabled:!doc?.elements?.length||busy,'aria-pressed':confirmClear}),button('Grid',()=>{const next=!grid;live.current.grid=next;setGrid(next);paintRef.current&&paintRef.current();},{'aria-pressed':grid}),button('Numbers',()=>{const next=!badges;live.current.badges=next;setBadges(next);paintRef.current&&paintRef.current();},{'aria-pressed':badges}),button('Fit',fit,{disabled:!doc}))),
         h('div',{className:'ic-float ic-tc ic-rail',role:'toolbar','aria-label':t('Canvas'),onMouseLeave:()=>{setTip(null);setMoreOpen(false);}},
           ...primaryTools.map(k=>toolButton(k)),
