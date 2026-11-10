@@ -441,7 +441,7 @@ window.__ModuleLoader__.load({
         if(pts.length===2){ctx.lineTo(pts[1][0],pts[1][1]);return;}
         for(let i=0;i<pts.length-1;i++){const p0=pts[i-1]||pts[i],p1=pts[i],p2=pts[i+1],p3=pts[i+2]||p2;
           ctx.bezierCurveTo(p1[0]+(p2[0]-p0[0])/6,p1[1]+(p2[1]-p0[1])/6,p2[0]-(p3[0]-p1[0])/6,p2[1]-(p3[1]-p1[1])/6,p2[0],p2[1]);}};
-      const strokePath=(ctx,pts,width,pen,color,pressures)=>{if(!pts||!pts.length)return;const w=Math.max(.5,Number(width)||2);
+      const strokePath=(ctx,pts,width,pen,color,pressures,sharp)=>{if(!pts||!pts.length)return;const w=Math.max(.5,Number(width)||2);
         if(pts.length===1){ctx.fillStyle=color;ctx.beginPath();ctx.arc(pts[0][0],pts[0][1],Math.max(.6,w/2),0,Math.PI*2);ctx.fill();return;}
         const pk=pen||'plain',pressed=i=>Array.isArray(pressures)&&pressures.length===pts.length?Math.max(.05,Math.min(1,Number(pressures[i])||0)):0;
         // Natural ink: a variable-width filled ribbon. Pressure wins when a stylus reports it; otherwise speed tapers the nib.
@@ -467,8 +467,10 @@ window.__ModuleLoader__.load({
           ctx.beginPath();ctx.arc(end[0],end[1],Math.max(.4,end[2]),0,Math.PI*2);ctx.fill();
           return;}
         ctx.strokeStyle=color;ctx.lineJoin='round';ctx.lineCap='round';ctx.setLineDash([]);
+        // Shape fragments keep their original straight edges; freehand strokes still get the smoothing pass.
+        const trace=()=>{if(sharp){ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));}else traceStroke(ctx,pts);};
         if(pk==='pencil'){ctx.globalAlpha=.72;ctx.lineWidth=Math.max(.6,w*.85);
-          traceStroke(ctx,pts);ctx.stroke();
+          trace();ctx.stroke();
           for(let i=0;i<pts.length;i++){const r=(i*9301+49297)%233280/233280,jr=((i*233280+49297)%9301)/9301;
             if(r<.45)continue;const p=pts[i],ang=(i*2.39996)%(Math.PI*2),dist=(.4+jr)*w*.6;
             ctx.globalAlpha=.16+.26*jr;ctx.fillStyle=color;ctx.beginPath();
@@ -477,7 +479,7 @@ window.__ModuleLoader__.load({
         if(pk==='marker'){ctx.globalAlpha=.5;ctx.lineWidth=w*1.9;}
         else if(pk==='watercolor'){ctx.globalAlpha=.3;ctx.lineWidth=w*2.1;ctx.shadowBlur=Math.max(4,w*1.6);ctx.shadowColor=color;}
         else{ctx.lineWidth=w;}
-        traceStroke(ctx,pts);ctx.stroke();
+        trace();ctx.stroke();
         ctx.globalAlpha=1;ctx.shadowBlur=0;};
       const drawEl=(ctx,e,st,ink)=>{if(e.kind==='group')return;const r=rectWith(e,st.gesture),or=e.rect,stroke=typeof e.stroke==='string'?e.stroke:st.color;
         const rot=((Number(e.rotation)||0)+((st.gesture?.kind==='rotate'&&st.gesture.ids?.includes(e.id))?st.gesture.angle:0))*Math.PI/180;
@@ -486,7 +488,7 @@ window.__ModuleLoader__.load({
         if(e.kind==='path'){if(!e.points?.length)return;
           const pts=e.points.map(p=>[r[0]+p[0]*(or[2]?r[2]/or[2]:1),r[1]+p[1]*(or[3]?r[3]/or[3]:1)]);
           if(e.fill&&e.fill!=='none'){ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.fillStyle=e.fill;ctx.fill();}
-          strokePath(ctx,pts,e.strokeWidth||2,e.pen||'plain',stroke,e.pressures);}
+          strokePath(ctx,pts,e.strokeWidth||2,e.pen||'plain',stroke,e.pressures,e.sharp||(e.kind==='path'&&!e.pen&&!e.semi));}
         else if(e.kind==='image'){const item=e.src?imageEntry(e.src):null;
           if(item?.img)ctx.drawImage(item.img,r[0],r[1],r[2],r[3]);
           else{ctx.save();ctx.fillStyle='#e9ede8';ctx.strokeStyle='#b6c2b8';ctx.lineWidth=1;ctx.setLineDash([5,4]);ctx.fillRect(r[0],r[1],r[2],r[3]);ctx.strokeRect(r[0],r[1],r[2],r[3]);ctx.setLineDash([]);
@@ -731,7 +733,7 @@ window.__ModuleLoader__.load({
             onKeyDown:e=>{if(e.key==='Escape'){e.stopPropagation();live.current.editor=null;setEditor(null);}if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();saveEditor();}}}),h('div',{className:'ic-consult',style:{top:editor.rect[1]*eview.z+eview.y+Math.max(85,editor.rect[3]*eview.z)+10,left:editor.rect[0]*eview.z+eview.x,right:'auto',bottom:'auto',width:'auto',maxWidth:'calc(100% - 20px)',padding:'8px 10px'}},h('div',{className:'ic-actions'},h('input',{type:'color',className:'ic-color',value:editor.textColor||'#26382d',onChange:e=>{const next={...live.current.editor,textColor:e.target.value};live.current.editor=next;setEditor(next);},'aria-label':t('Text color'),title:t('Text color')}),h('select',{'aria-label':t('Font size'),title:t('Font size'),value:Number(editor.fontSize)||16,onChange:e=>{const next={...live.current.editor,fontSize:+e.target.value};live.current.editor=next;setEditor(next);}},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),button('Save',saveEditor),button('Cancel',()=>{live.current.editor=null;setEditor(null);})))),
           consult&&h('aside',{className:'ic-consult','aria-label':t('What does this circle mean?')},h('h3',null,t('What does this circle mean?')),h('p',null,t('Keep it as a drawing, make a card, or group the enclosed items. Nothing converts without your choice.')),h('div',{className:'ic-actions'},consult.id&&button('Make card',()=>consultChoice('card'),{disabled:busy}),button('Group enclosed',()=>consultChoice('group'),{disabled:busy||consult.ids.length<2}),button('Keep drawing',()=>consultChoice('ignore'))))),
         h('div',{className:'ic-top'},
-          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.1.10'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
+          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.1.11'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
           h('div',{className:'ic-float ic-tr'},button('Undo',()=>action('undo'),{disabled:busy||!doc?.history?.length}),button('Redo',()=>action('redo'),{disabled:busy||!doc?.future?.length}),button(confirmClear?'Confirm clear':'Clear canvas',clearBoard,{disabled:!doc?.elements?.length||busy,'aria-pressed':confirmClear}),button('Grid',()=>{const next=!grid;live.current.grid=next;setGrid(next);paintRef.current&&paintRef.current();},{'aria-pressed':grid}),button('Numbers',()=>{const next=!badges;live.current.badges=next;setBadges(next);paintRef.current&&paintRef.current();},{'aria-pressed':badges}),button('Fit',fit,{disabled:!doc}))),
         h('div',{className:'ic-float ic-tc ic-rail',role:'toolbar','aria-label':t('Canvas'),onMouseLeave:()=>{setTip(null);setMoreOpen(false);}},
           ...primaryTools.map(k=>toolButton(k)),

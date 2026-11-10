@@ -161,7 +161,7 @@ function execute(d, op, author, fragments) {
         const base = e.kind === 'path' ? e : { ...copy(e), kind: 'path', fill: 'none' };
         const replacements = parts.map((ps, i) => {
           const x = Math.min(...ps.map(p => p[0])), y = Math.min(...ps.map(p => p[1]));
-          const item = { ...copy(base), id: i === 0 ? e.id : fresh(d, `${e.id}-fragment`), rect: [x, y, Math.max(...ps.map(p => p[0])) - x, Math.max(...ps.map(p => p[1])) - y], points: ps.map(p => [p[0] - x, p[1] - y]) };
+          const item = { ...copy(base), id: i === 0 ? e.id : fresh(d, `${e.id}-fragment`), rect: [x, y, Math.max(...ps.map(p => p[0])) - x, Math.max(...ps.map(p => p[1])) - y], points: ps.map(p => [p[0] - x, p[1] - y]), ...(e.kind === 'path' ? {} : { sharp: true }) };
           d.elements.push(item); return item;
         });
         d.elements = d.elements.filter(x => !replacements.includes(x)); d.elements.splice(index, 0, ...replacements);

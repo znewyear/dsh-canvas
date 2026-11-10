@@ -10,6 +10,7 @@ test('fragment eraser cuts closed shapes into path fragments', () => {
   const out = run(d, [{ type: 'erasePath', points: [[50, 0]], radius: 5 }]);
   assert.ok(out.document.elements.length >= 1);
   assert.ok(out.document.elements.every(e => e.kind === 'path'));
+  assert.ok(out.document.elements.every(e => e.sharp === true), 'shape fragments render with straight edges');
   assert.equal(out.document.elements[0].id, 'r');
 });
 
