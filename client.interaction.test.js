@@ -43,7 +43,7 @@ function harness({session,activity,inputActions,locale=createLocale(),globals={}
   effects.splice(0).forEach(fn=>fn?.());
   const flush=()=>{effects.splice(0).forEach(fn=>fn?.());};
   const dispatch=(type,event)=>{for(const fn of [...(winListeners.get(type)||[])])fn(event);};
-  return {render,calls,flush,dispatch};
+  return {render,calls,flush,dispatch,doc};
 }
 const nodes=tree=>tree&&typeof tree==='object'?[tree,...(tree.children??[]).flatMap(nodes)]:[];
 const text=tree=>typeof tree==='string'?tree:(tree?.children??[]).map(text).join('');
@@ -154,21 +154,20 @@ test('rotating twice in a row commits both angles',async()=>{
   tree.props.onKeyDown(key('p'));
   await gesture(panel,[[100,100],[200,120],[300,140]]);
   const ev=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
-    target:{getAttribute:name=>name==='data-rotate'?'1':null},
-    preventDefault(){},stopPropagation(){},
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
     currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
-  const spin=(from,to)=>async()=>{
-    const layer=nodes(panel.render()).find(n=>n.props?.className==='ic-handles');
-    layer.props.onPointerDown(ev(...from));
-    layer.props.onPointerMove(ev(...to));
-    await layer.props.onPointerUp(ev(...to));
-    await tick();
-  };
-  await spin([200,60],[300,120])();
+  const rot=(p,c,a)=>[c[0]+(p[0]-c[0])*Math.cos(a)-(p[1]-c[1])*Math.sin(a),c[1]+(p[0]-c[0])*Math.sin(a)+(p[1]-c[1])*Math.cos(a)];
+  // Same geometry as the canvas: the rotate handle sits above the rotated box, in screen space.
+  const handle=()=>{const e=panel.doc.elements[0],[x,y,w,h]=e.rect,a=(Number(e.rotation)||0)*Math.PI/180,cx=x+w/2,cy=y+h/2;
+    const cs=[[x,y],[x+w,y],[x+w,y+h],[x,y+h]].map(p=>rot(p,[cx,cy],a)),xs=cs.map(p=>p[0]),ys=cs.map(p=>p[1]);
+    return [(Math.min(...xs)+Math.max(...xs))/2+90,Math.max(Math.min(...ys)-22,6-70)+70];};
+  const spin=async(from,to)=>{const layer=nodes(panel.render()).find(n=>n.props?.role==='img');
+    layer.props.onPointerDown(ev(...from));layer.props.onPointerMove(ev(...to));await layer.props.onPointerUp(ev(...to));await tick();};
+  await spin(handle(),[300,120]);
   const first=panel.calls.at(-1)[1].ops[0];
   assert.equal(first.type,'update');
   assert.ok(Math.abs(first.patch.rotation-90)<1);
-  await spin([200,60],[300,120])();
+  await spin(handle(),[300,120]);
   const second=panel.calls.at(-1)[1].ops[0];
   assert.equal(second.type,'update','the second rotation also commits');
   assert.ok(Math.abs(second.patch.rotation-180)<1,'the angle accumulates');
@@ -212,15 +211,16 @@ test('repeated resizes keep a usable minimum size',async()=>{
   let tree=panel.render();
   tree.props.onKeyDown(key('r'));
   await gesture(panel,[[100,100],[300,200]]);
-  const ev=(x,y,target)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
-    target:{getAttribute:name=>name==='data-resize'?target:null},
-    preventDefault(){},stopPropagation(){},
+  const ev=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
     currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+  const se=()=>{const e=panel.doc.elements[0];return[(e.rect[0]+e.rect[2])+90,(e.rect[1]+e.rect[3])+70];};
   for(let i=0;i<3;i++){
-    const layer=nodes(panel.render()).find(n=>n.props?.className==='ic-handles');
-    layer.props.onPointerDown(ev(300,200,'se'));
-    layer.props.onPointerMove(ev(120,120));
-    await layer.props.onPointerUp(ev(120,120));
+    const layer=nodes(panel.render()).find(n=>n.props?.role==='img');
+    const [hx,hy]=se();
+    layer.props.onPointerDown(ev(hx,hy));
+    layer.props.onPointerMove(ev(hx-220,hy-140));
+    await layer.props.onPointerUp(ev(hx-220,hy-140));
     await tick();
   }
   const op=panel.calls.at(-1)[1].ops[0];
@@ -235,12 +235,11 @@ test('dragging the rotation handle stores an angle',async()=>{
   tree.props.onKeyDown(key('p'));
   await gesture(panel,[[100,100],[200,120],[300,140]]);
   tree=panel.render();
-  const layer=nodes(tree).find(n=>n.props?.className==='ic-handles');
+  const layer=nodes(tree).find(n=>n.props?.role==='img');
   const ev=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
-    target:{getAttribute:name=>name==='data-rotate'?'1':null},
-    preventDefault(){},stopPropagation(){},
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
     currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
-  layer.props.onPointerDown(ev(200,60));
+  layer.props.onPointerDown(ev(200,78));
   layer.props.onPointerMove(ev(300,120));
   await layer.props.onPointerUp(ev(300,120));
   await tick();
@@ -543,18 +542,17 @@ test('whole erase removes everything it touches in one operation',async()=>{
   assert.equal(op.ids.length,1);
 });
 
-test('dragging a selection handle resizes through the handle layer',async()=>{
+test('dragging a canvas handle resizes the selection',async()=>{
   const panel=harness();
   await tick();
   let tree=panel.render();
   tree.props.onKeyDown(key('p'));
   await gesture(panel,[[100,100],[200,120],[300,140]]);
   tree=panel.render();
-  const layer=nodes(tree).find(n=>n.props?.className==='ic-handles');
-  assert.ok(layer,'handle layer renders above the canvas');
+  const layer=nodes(tree).find(n=>n.props?.role==='img');
+  assert.ok(layer,'the overlay owns hit-testing and drawing');
   const handleEvent=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
-    target:{getAttribute:name=>name==='data-resize'?'se':null},
-    preventDefault(){},stopPropagation(){},
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
     currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
   layer.props.onPointerDown(handleEvent(300,140));
   layer.props.onPointerMove(handleEvent(400,200));
@@ -566,15 +564,24 @@ test('dragging a selection handle resizes through the handle layer',async()=>{
   assert.ok(op.rect[3]>40,'height grows with the drag');
 });
 
-test('selection exposes eight directional handles',async()=>{
-  const panel=harness();
-  await tick();
-  let tree=panel.render();
-  tree.props.onKeyDown(key('p'));
-  await gesture(panel,[[100,100],[200,120],[300,140]]);
-  tree=panel.render();
-  const handles=nodes(tree).filter(n=>n.props?.['data-resize']).map(n=>n.props['data-resize']).sort();
-  assert.deepEqual(handles,['e','n','ne','nw','s','se','sw','w']);
+test('selection exposes eight grabbable directional handles',async()=>{
+  const directions={nw:[100,100],n:[200,100],ne:[300,100],e:[300,150],se:[300,200],s:[200,200],sw:[100,200],w:[100,150]};
+  for(const [hd,[hx,hy]] of Object.entries(directions)){
+    const panel=harness();
+    await tick();
+    const first=panel.render();
+    first.props.onKeyDown(key('r'));
+    await gesture(panel,[[100,100],[300,200]]);
+    const layer=nodes(panel.render()).find(n=>n.props?.role==='img');
+    const ev=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
+      target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
+      currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+    layer.props.onPointerDown(ev(hx,hy));
+    layer.props.onPointerMove(ev(hx+12,hy+12));
+    await layer.props.onPointerUp(ev(hx+12,hy+12));
+    await tick();
+    assert.equal(panel.calls.at(-1)[1].ops[0].type,'resize',`${hd} starts a resize`);
+  }
 });
 
 test('pointing at a tool shows its name and shortcut',async()=>{
