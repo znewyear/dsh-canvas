@@ -1,6 +1,7 @@
 // Pure JSON canvas model. Geometry is bounded to keep imported batches predictable.
 export const HISTORY_LIMIT = 100;
-const LIMIT = 1e6, MAX_POINTS = 10000, MAX_ELEMENTS = 10000;
+const LIMIT = 1e6, MAX_POINTS = 10000, MAX_ELEMENTS = 10000, IMAGE_SRC_LIMIT = 900000;
+const IMAGE_SRC = /^data:image\/(?:png|jpe?g|webp|gif);base64,/;
 const copy = value => JSON.parse(JSON.stringify(value));
 const fail = (message, code = 'VALIDATION') => { throw Object.assign(new Error(message), { code }); };
 const number = (n, name = 'coordinate') => { if (typeof n !== 'number' || !Number.isFinite(n) || Math.abs(n) > LIMIT) fail(`Invalid ${name}`); return n; };
@@ -38,6 +39,8 @@ function validate(d) {
     rect(e.rect); if (e.points !== undefined) points(e.points);
     if (e.kind === 'path' && !e.points) fail('Path needs points');
     if (e.text !== undefined && typeof e.text !== 'string') fail('Invalid text');
+    // Images are inline data URLs (no remote fetches, no tainted exports) and stay small because every undo snapshot copies them.
+    if (e.kind === 'image' && (typeof e.src !== 'string' || e.src.length > IMAGE_SRC_LIMIT || !IMAGE_SRC.test(e.src))) fail('Image requires a bounded raster data URL src');
   }
   for (const e of d.elements) {
     const seen = new Set([e.id]); let parent = e.parent;

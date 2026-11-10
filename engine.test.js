@@ -126,6 +126,18 @@ test('paste/align/distribute and invalid geometry remains atomic', () => {
   assert.throws(() => run(d, [{ type: 'move', ids, dx: 1e6, dy: 0 }]));
 });
 
+test('image elements require a bounded data URL and resize/rotate like shapes', () => {
+  const src = 'data:image/webp;base64,' + 'A'.repeat(48);
+  let d = seed({ id: 'img', kind: 'image', rect: [0, 0, 120, 60], src });
+  d = run(d, [{ type: 'resize', id: 'img', rect: [10, 20, 300, 150] }, { type: 'update', id: 'img', patch: { rotation: 45 } }]).document;
+  assert.deepEqual(d.elements[0].rect, [10, 20, 300, 150]);
+  assert.equal(d.elements[0].rotation, 45);
+  for (const bad of ['https://example.com/a.png', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/png;base64,' + 'A'.repeat(900001)]) {
+    assert.throws(() => run(d, [{ type: 'create', element: { id: 'bad', kind: 'image', rect: [0, 0, 1, 1], src: bad } }]), /bounded raster data URL/);
+  }
+  assert.equal(d.elements.length, 1);
+});
+
 test('explicit circle promotion requires consultation approval by human', () => {
   let d = seed({ id: 'c', kind: 'circle', rect: [0, 0, 30, 30] });
   d = run(d, [{ type: 'promote', id: 'c', to: 'button' }], 'ai').document;

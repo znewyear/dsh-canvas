@@ -24,3 +24,14 @@ test('invalid ids cannot access storage and unchanged uses version',async()=>{
  const s=createStore(table());await assert.rejects(s.read({doc:'../other'}),{code:'INVALID_DOCUMENT'});
  assert.equal((await s.read({sinceSeq:0})).unchanged,true);
 });
+test('poll acknowledgements omit the document and history does not echo image bytes',async()=>{
+ const s=createStore(table()),src='data:image/png;base64,'+'A'.repeat(40);
+ const created=await s.apply({baseVersion:0,ops:[{type:'create',element:{id:'img',kind:'image',rect:[0,0,10,10],src}}]});
+ assert.equal(created.document.elements[0].src,src);
+ const ack=await s.read({sinceSeq:1});
+ assert.equal(ack.unchanged,true);assert.equal(ack.document,undefined);
+ await s.apply({baseVersion:1,ops:[{type:'move',ids:['img'],dx:5,dy:0}]});
+ const doc=(await s.read()).document;
+ assert.equal(doc.elements[0].src,src);
+ assert.equal(doc.history.find(s=>s.elements.length).elements[0].src,'[image data omitted]');
+});

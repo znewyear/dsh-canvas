@@ -8,14 +8,14 @@ const source=await readFile(new URL('./client.js',import.meta.url),'utf8');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 
 // Drives the mounted panel with real pointer/keyboard handlers so the gesture code, not a copy of it, produces the operations.
-function harness({session,activity,inputActions,locale=createLocale()}={}){
-  let module,cursor=0;const states=[],refs=[],effects=[],registrations=[],calls=[];
-  const el=()=>({focus(){},getBoundingClientRect:()=>({left:0,top:0}),clientWidth:800,clientHeight:600,setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false,style:{}});
+function harness({session,activity,inputActions,locale=createLocale(),globals={},elements=[],canvasContext=null}={}){
+  let module,cursor=0;const states=[],refs=[],effects=[],effectDeps=[],registrations=[],calls=[];
+  const el=()=>({focus(){},getBoundingClientRect:()=>({left:0,top:0}),clientWidth:800,clientHeight:600,setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false,getContext:canvasContext?()=>canvasContext:undefined,style:{}});
   const React={Fragment:'fragment',createElement:(type,props,...children)=>({type,props,children}),
     useState(initial){const i=cursor++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return [states[i],value=>{states[i]=typeof value==='function'?value(states[i]):value;}];},
     useRef(initial){const i=cursor++;return refs[i]??={current:initial===null?el():initial};},
-    useEffect(fn){effects.push(fn);}};
-  const doc={id:'canvas',version:1,elements:[],history:[],future:[],annotations:[],pending:[]};
+    useEffect(fn,deps){const i=cursor++,prev=effectDeps[i];if(prev&&deps&&prev.length===deps.length&&deps.every((v,j)=>v===prev[j]))return;effectDeps[i]=deps;effects.push(fn);}};
+  const doc={id:'canvas',version:1,elements:[...elements],history:[],future:[],annotations:[],pending:[]};
   const envelope=d=>({ok:true,json:async()=>({ok:true,document:{...d,elements:[...d.elements]},...(activity?{activity}:{})})});
   const fetch=async(url,init)=>{
     calls.push([url,JSON.parse(init.body)]);
@@ -30,7 +30,9 @@ function harness({session,activity,inputActions,locale=createLocale()}={}){
     });
     return envelope(doc);
   };
-  vm.runInNewContext(source,{window:{__ModuleLoader__:{load:value=>{module=value;}},addEventListener(){},removeEventListener(){}},setInterval:()=>1,clearInterval(){},setTimeout:()=>0,clearTimeout(){},__DSH_TRANSPORT__:{fetch}});
+  const winListeners=new Map();
+  const windowStub={__ModuleLoader__:{load:value=>{module=value;}},addEventListener(type,fn){if(!winListeners.has(type))winListeners.set(type,new Set());winListeners.get(type).add(fn);},removeEventListener(type,fn){winListeners.get(type)?.delete(fn);}};
+  vm.runInNewContext(source,{window:windowStub,setInterval:()=>1,clearInterval(){},setTimeout:()=>0,clearTimeout(){},__DSH_TRANSPORT__:{fetch},...globals});
   const plugin=module.factory(()=>React);
   const sessions={retain:(id,options)=>({ready:Promise.resolve(),release(){},binding:{session:{prompt:async(content,mode)=>{calls.push(['prompt',id,options,content,mode]);return {ok:true};}}}})};
   plugin.apply({get:name=>({slots:{inject:(_,fn)=>fn(),register:(options,component)=>registrations.push({options,component})},locale,layout:{},sessions})[name]});
@@ -39,7 +41,9 @@ function harness({session,activity,inputActions,locale=createLocale()}={}){
   const render=()=>{cursor=0;return canvas.type(session?{...canvas.props,sessionId:session,inputActions}:canvas.props);};
   render();
   effects.splice(0).forEach(fn=>fn?.());
-  return {render,calls};
+  const flush=()=>{effects.splice(0).forEach(fn=>fn?.());};
+  const dispatch=(type,event)=>{for(const fn of [...(winListeners.get(type)||[])])fn(event);};
+  return {render,calls,flush,dispatch};
 }
 const nodes=tree=>tree&&typeof tree==='object'?[tree,...(tree.children??[]).flatMap(nodes)]:[];
 const text=tree=>typeof tree==='string'?tree:(tree?.children??[]).map(text).join('');
@@ -297,6 +301,40 @@ test('right-click opens a canvas menu with copy and paste',async()=>{
   assert.ok(items.some(t=>/Paste|粘贴/.test(t)),'offers paste');
 });
 
+test('pasting an image from the system clipboard creates an editable image element',async()=>{
+  const png='data:image/png;base64,'+'A'.repeat(60);
+  class FakeImage{constructor(){this.naturalWidth=200;this.naturalHeight=100;}set src(value){this._src=value;Promise.resolve().then(()=>this.onload&&this.onload());}get src(){return this._src;}}
+  class FakeFileReader{readAsDataURL(blob){this.result=blob.dataUrl;Promise.resolve().then(()=>this.onload&&this.onload());}}
+  const panel=harness({globals:{
+    navigator:{clipboard:{read:async()=>[{types:['image/png'],getType:async()=>({dataUrl:png})}]}},
+    Image:FakeImage,FileReader:FakeFileReader
+  }});
+  await tick();
+  let tree=panel.render();
+  nodes(tree).find(n=>n.props?.role==='img').props.onContextMenu({clientX:200,clientY:150,preventDefault(){}});
+  tree=panel.render();
+  const paste=nodes(tree).filter(n=>n.props?.role==='menuitem').find(n=>/Paste|粘贴/.test(text(n)));
+  assert.ok(paste,'paste menu item exists');
+  paste.props.onClick();
+  for(let i=0;i<6;i++)await tick();
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'create');
+  assert.equal(op.element.kind,'image');
+  assert.equal(op.element.src,png);
+  assert.deepEqual(op.element.rect.slice(2),[200,100],'natural size is kept for small images');
+});
+
+test('image elements paint through drawImage after they decode',async()=>{
+  const png='data:image/png;base64,'+'A'.repeat(60),drawn=[];
+  const ctx=new Proxy({drawImage:(...args)=>{drawn.push(args);}},{get:(target,key)=>key in target?target[key]:()=>{},set:(target,key,value)=>{target[key]=value;return true;}});
+  class FakeImage{constructor(){this.naturalWidth=200;this.naturalHeight=100;}set src(value){this._src=value;Promise.resolve().then(()=>this.onload&&this.onload());}get src(){return this._src;}}
+  const panel=harness({elements:[{id:'img',kind:'image',rect:[10,20,200,100],src:png}],canvasContext:ctx,globals:{Image:FakeImage}});
+  await tick();panel.render();panel.flush();
+  for(let i=0;i<4;i++)await tick();
+  assert.ok(drawn.length,'decoded images are drawn');
+  assert.deepEqual(drawn.at(-1).slice(1),[10,20,200,100]);
+});
+
 test('the text editor sets font size and colour on new text',async()=>{
   const panel=harness();
   await tick();
@@ -331,6 +369,44 @@ test('the numbers toggle switches the badges off and on',async()=>{
   on.props.onClick();
   tree=panel.render();
   assert.equal(button(tree,'Numbers').props['aria-pressed'],false);
+});
+
+test('coalesced pointer samples and stylus pressure reach the stroke',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  tree=panel.render();
+  const surface=nodes(tree).find(n=>n.props?.role==='img').props;
+  const ev=(x,y,extra={})=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,pointerType:'pen',pressure:.5,
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
+    currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false},...extra});
+  surface.onPointerDown(ev(100,100,{pressure:.2}));
+  surface.onPointerMove(ev(150,120,{pressure:.7,getCoalescedEvents:()=>[
+    {clientX:120,clientY:105,pointerType:'pen',pressure:.35},
+    {clientX:138,clientY:113,pointerType:'pen',pressure:.55}]}));
+  await surface.onPointerUp(ev(180,130,{pressure:.8}));
+  await tick();
+  const element=panel.calls.at(-1)[1].ops[0].element;
+  assert.ok(element.points.length>=4,'sub-frame coalesced samples are kept');
+  assert.equal(element.pressures?.length,element.points.length);
+  assert.ok(element.pressures.some(value=>value<.45),'stylus pressure is stored');
+  assert.ok(element.pressures.every(value=>value>=.05&&value<=1));
+});
+
+test('an idle host re-render does not repaint an unchanged canvas',async()=>{
+  const calls={};
+  const ctx=new Proxy({}, {get:(target,key)=>key in target?target[key]:(...args)=>{calls[key]=(calls[key]||0)+1;},
+    set:(target,key,value)=>{target[key]=value;return true;}});
+  const panel=harness({canvasContext:ctx});
+  await tick();
+  panel.render();panel.flush();
+  const first=calls.clearRect||0;
+  assert.ok(first>0,'the first frame paints');
+  panel.render();panel.flush();
+  assert.equal(calls.clearRect||0,first,'an unchanged React render skips the bitmap upload');
+  panel.flush();
+  assert.equal(calls.clearRect||0,first);
 });
 
 test('rotate mode turns any drag into a rotation and repeats',async()=>{
@@ -513,6 +589,85 @@ test('the semicircle tool draws a half disc from a drag',async()=>{
   assert.equal(op.element.points.length,33);
   assert.ok(op.element.rect[2]>200,'the drag width becomes the diameter');
   assert.ok(Math.abs(op.element.rect[3]-120)<2,'the drag height becomes the radius');
+});
+
+test('the semicircle tool sits directly below the ellipse tool',async()=>{
+  const panel=harness();
+  await tick();
+  const rail=nodes(panel.render()).find(n=>n.props?.role==='toolbar'&&n.props?.['aria-label']==='Canvas');
+  const order=['Select','Pan','Pen','Erase','Text','Rectangle','Ellipse','Semicircle','Arrow','Note','Lasso'];
+  const labels=nodes(rail).filter(n=>n.type==='button'&&order.includes(n.props?.['aria-label'])).map(n=>n.props['aria-label']);
+  assert.deepEqual(labels,order);
+});
+
+test('Open on the current document re-reads it instead of doing nothing',async()=>{
+  const panel=harness();
+  await tick();
+  const open=button(panel.render(),'Reload');
+  assert.ok(open,'the current document offers a reload action');
+  const before=panel.calls.length;
+  open.props.onClick();
+  await tick();await tick();
+  const reads=panel.calls.slice(before).filter(call=>call[0].endsWith('/read'));
+  assert.equal(reads.length,1,'the button issues a fresh read');
+  assert.equal(reads[0][1].sinceSeq,undefined,'a forced read bypasses the version acknowledgement');
+});
+
+test('editing the document field opens that board',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  const input=nodes(tree).find(n=>n.props?.['aria-label']==='Document');
+  input.props.onChange({target:{value:'board-2'}});
+  tree=panel.render();
+  button(tree,'Open').props.onClick();
+  tree=panel.render();panel.flush();
+  await tick();
+  assert.ok(panel.calls.some(call=>call[0].endsWith('/read')&&call[1].doc==='board-2'),'the new board is read');
+});
+
+test('the bottom More actions menu survives pointerdown and applies its item',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  tree=panel.render();
+  tree.props.onKeyDown(key('v'));
+  tree=panel.render();
+  button(tree,'More actions').props.onClick();
+  tree=panel.render();panel.flush();
+  assert.ok(button(tree,'Rotate left'),'the menu opened');
+  panel.dispatch('pointerdown',{target:{closest:selector=>selector==='.ic-more-wrap'?'div':null}});
+  tree=panel.render();panel.flush();
+  assert.ok(button(tree,'Rotate left'),'pointerdown inside the menu must not close it');
+  button(tree,'Rotate left').props.onClick();
+  await tick();
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'update');
+  assert.equal(op.patch.rotation,270);
+});
+
+test('the export control uses a larger icon',async()=>{
+  const panel=harness();
+  await tick();
+  const control=button(panel.render(),'Export PNG');
+  assert.equal(control.props.style.width,38);
+  assert.ok(nodes(control).some(n=>n.props?.kind==='image'&&n.props?.size===23),'the glyph is larger');
+});
+
+test('the document field explains itself, is wider and has an empty placeholder',async()=>{
+  const panel=harness();
+  await tick();
+  const tree=panel.render();
+  const input=nodes(tree).find(n=>n.props?.['aria-label']==='Document');
+  assert.equal(input.props.placeholder,'Please enter the canvas id to open');
+  assert.match(input.props.title,/defaults to this session/);
+  assert.match(String(input.props.style.width),/clamp/);
+  assert.equal(button(tree,'Reload').props.title,'Re-read this canvas from the server');
+  input.props.onChange({target:{value:''}});
+  const cleared=panel.render();
+  assert.equal(button(cleared,'Open').props.disabled,true,'an empty id cannot be opened');
 });
 
 test('clearing the board needs a second click and submits one clear operation',async()=>{
