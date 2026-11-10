@@ -729,7 +729,7 @@ test('a selected pen stroke exposes stroke style controls without fill',async()=
 });
 
 test('eraser radius follows the live zoom',async()=>{
-  const panel=harness();
+  const panel=harness({elements:[{id:'ink',kind:'path',rect:[0,0,400,300],points:[[0,0],[400,300]],stroke:'#356c59',strokeWidth:2,fill:'none'}]});
   await tick();
   let tree=panel.render();
   tree.props.onKeyDown(key('e'));
@@ -740,6 +740,16 @@ test('eraser radius follows the live zoom',async()=>{
   const op=panel.calls.at(-1)[1].ops[0];
   assert.equal(op.type,'erasePath');
   assert.ok(Math.abs(op.radius-14/1.2)<1e-9,'the committed radius is screen-constant');
+});
+
+test('fragment erase leaves filled shapes to whole erase',async()=>{
+  const panel=harness({elements:[{id:'box',kind:'rect',rect:[0,0,200,100],stroke:'#356c59',strokeWidth:2,fill:'#cfe3d5'}]});
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('e'));
+  tree=panel.render();
+  await gesture(panel,[[200,120],[260,130]]);
+  assert.equal(panel.calls.filter(call=>call[0].endsWith('/apply')).length,0,'a filled shape is not fragmented by the eraser');
 });
 
 test('whole erase removes everything it touches in one operation',async()=>{
