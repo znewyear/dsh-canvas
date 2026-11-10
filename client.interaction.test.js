@@ -704,6 +704,30 @@ test('legacy semicircle paths are recognised without the marker',async()=>{
   assert.ok(button(tree,'Border color'),'the 33-point half disc is treated as a shape');
 });
 
+test('a selected pen stroke exposes stroke style controls without fill',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('p'));
+  tree=panel.render();
+  await gesture(panel,[[100,100],[200,120],[300,140]]);
+  const created=panel.calls.at(-1)[1].ops[0].element;
+  tree=panel.render();
+  tree.props.onKeyDown(key('v'));
+  tree=panel.render();
+  assert.ok(button(tree,'Border color'),'the selected stroke offers stroke colour');
+  assert.ok(button(tree,'Border width'),'the selected stroke offers stroke width');
+  assert.equal(button(tree,'Fill'),undefined,'an open stroke has no fill control');
+  button(tree,'Border color').props.onClick();
+  tree=panel.render();
+  nodes(tree).find(n=>n.type==='button'&&n.props?.['aria-label']==='#e03131').props.onClick();
+  await tick();
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'update');
+  assert.equal(op.id,created.id);
+  assert.equal(op.patch.stroke,'#e03131');
+});
+
 test('eraser radius follows the live zoom',async()=>{
   const panel=harness();
   await tick();
