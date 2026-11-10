@@ -342,6 +342,73 @@ test('right-click opens a canvas menu with copy and paste',async()=>{
   assert.ok(items.some(t=>/Paste|粘贴/.test(t)),'offers paste');
 });
 
+test('the context menu groups only a multi-selection',async()=>{
+  const rect=(id,x)=>({id,kind:'rect',rect:[x,0,50,50],stroke:'#356c59',strokeWidth:2,fill:'none'});
+  const panel=harness({elements:[rect('a',0),rect('b',100)]});
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('a',{ctrlKey:true}));
+  tree=panel.render();
+  const canvas=nodes(tree).find(n=>n.props?.role==='img').props;
+  canvas.onContextMenu({clientX:500,clientY:400,preventDefault(){}});
+  tree=panel.render();
+  const group=nodes(tree).find(n=>n.props?.role==='menuitem'&&/Group|编组/.test(text(n)));
+  assert.ok(group,'group item exists');
+  assert.equal(group.props.disabled,false,'two selected roots can be grouped');
+  group.props.onClick();
+  await tick();
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'group');
+  assert.equal(op.ids.length,2);
+});
+
+test('the context menu keeps Group disabled for a single selection',async()=>{
+  const panel=harness({elements:[{id:'a',kind:'rect',rect:[0,0,50,50],stroke:'#356c59',strokeWidth:2,fill:'none'}]});
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('a',{ctrlKey:true}));
+  tree=panel.render();
+  const canvas=nodes(tree).find(n=>n.props?.role==='img').props;
+  canvas.onContextMenu({clientX:500,clientY:400,preventDefault(){}});
+  tree=panel.render();
+  const group=nodes(tree).find(n=>n.props?.role==='menuitem'&&/Group|编组/.test(text(n)));
+  assert.equal(group.props.disabled,true,'a single element cannot be grouped');
+});
+
+test('the context menu ungroups a selected group',async()=>{
+  const panel=harness({elements:[
+    {id:'g',kind:'group',rect:[0,0,100,100],stroke:'#356c59',strokeWidth:2,fill:'none'},
+    {id:'c',kind:'rect',parent:'g',rect:[0,0,100,100],stroke:'#356c59',strokeWidth:2,fill:'none'}
+  ]});
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('a',{ctrlKey:true}));
+  tree=panel.render();
+  const canvas=nodes(tree).find(n=>n.props?.role==='img').props;
+  canvas.onContextMenu({clientX:500,clientY:400,preventDefault(){}});
+  tree=panel.render();
+  const ungroup=nodes(tree).find(n=>n.props?.role==='menuitem'&&/Ungroup|取消编组/.test(text(n)));
+  assert.ok(ungroup,'ungroup item exists');
+  assert.equal(ungroup.props.disabled,false,'a selected group can be ungrouped');
+  ungroup.props.onClick();
+  await tick();
+  assert.equal(panel.calls.at(-1)[1].ops[0].type,'ungroup');
+});
+
+test('right-clicking an unselected group selects it before showing the menu',async()=>{
+  const panel=harness({elements:[
+    {id:'g',kind:'group',rect:[0,0,100,100],stroke:'#356c59',strokeWidth:2,fill:'none'},
+    {id:'c',kind:'rect',parent:'g',rect:[0,0,100,100],stroke:'#356c59',strokeWidth:2,fill:'none'}
+  ]});
+  await tick();
+  let tree=panel.render();
+  const canvas=nodes(tree).find(n=>n.props?.role==='img').props;
+  canvas.onContextMenu({clientX:150,clientY:120,preventDefault(){}});
+  tree=panel.render();
+  const ungroup=nodes(tree).find(n=>n.props?.role==='menuitem'&&/Ungroup|取消编组/.test(text(n)));
+  assert.equal(ungroup.props.disabled,false,'the clicked group became the selection');
+});
+
 test('pasting an image from the system clipboard creates an editable image element',async()=>{
   const png='data:image/png;base64,'+'A'.repeat(60);
   class FakeImage{constructor(){this.naturalWidth=200;this.naturalHeight=100;}set src(value){this._src=value;Promise.resolve().then(()=>this.onload&&this.onload());}get src(){return this._src;}}
