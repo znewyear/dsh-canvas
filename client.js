@@ -241,10 +241,17 @@ window.__ModuleLoader__.load({
         observer.observe(el);return()=>observer.disconnect();},[docId]);
       const commit=async ops=>{const s=live.current;if(!s.doc||!ops.length)return null;
         // A gesture that finishes while the previous commit is still in flight waits for it instead of being dropped.
-        for(let i=0;i<40&&s.busy;i++)await new Promise(r=>setTimeout(r,25));
+        for(let i=0;i<200&&s.busy;i++)await new Promise(r=>setTimeout(r,25));
         if(s.busy||!s.doc)return null;
         live.current.busy=true;clearTimeout(busyTimer.current);busyTimer.current=setTimeout(()=>setBusy(true),120);setError('');++readSeq.current;
-        try{const r=await rpc('apply',{doc:s.docId,baseVersion:s.doc.version,ops});if(live.current.docId===s.docId){setDoc(r.document);live.current.doc=r.document;setSelection(ids=>ids.filter(id=>r.document.elements.some(e=>e.id===id)));}watchActivity(r);return r;}
+        try{const r=await rpc('apply',{doc:s.docId,baseVersion:s.doc.version,ops});
+          if(live.current.docId===s.docId){
+            live.current.doc=r.document;
+            // The frozen preview stays on screen until React paints the committed document; no blank frame, no extra full paint.
+            const applyState=()=>{setDoc(r.document);setSelection(ids=>ids.filter(id=>r.document.elements.some(e=>e.id===id)));};
+            if(typeof React.startTransition==='function')React.startTransition(applyState);else applyState();
+          }
+          watchActivity(r);return r;}
         catch(e){report(e);return null;}finally{clearTimeout(busyTimer.current);busyTimer.current=0;live.current.busy=false;setBusy(false);}};
       const world=e=>{const r=svg.current.getBoundingClientRect(),v=live.current.view;return[(e.clientX-r.left-v.x)/v.z,(e.clientY-r.top-v.y)/v.z];};
       // W3C pressure is 0.5 for a plain mouse, so only a real stylus contributes a width signal.
@@ -272,7 +279,7 @@ window.__ModuleLoader__.load({
       const cancel=()=>{live.current.gesture=null;live.current.editor=null;setEditor(null);setConsult(null);paintRef.current&&paintRef.current();};
       const keyDown=e=>{if(!doc||['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName))return;const mod=e.ctrlKey||e.metaKey,k=e.key.toLowerCase();if(e.code==='Space'){space.current=true;e.preventDefault();return;}if(k==='escape'){setRotateMode(false);cancel();return;}if(mod&&k==='z'){e.preventDefault();action(e.shiftKey?'redo':'undo');return;}if(mod&&k==='y'){e.preventDefault();action('redo');return;}if(mod&&k==='a'){e.preventDefault();setSelection(doc.elements.filter(e=>!e.parent).map(e=>e.id));return;}if(mod&&k==='v'){e.preventDefault();pasteFromSystem();return;}if(mod&&['c','d','g'].includes(k)){e.preventDefault();action(k==='c'?'copy':k==='d'?'duplicate':e.shiftKey?'ungroup':'group');return;}if(k==='delete'||k==='backspace'){e.preventDefault();action('delete');return;}if(['arrowleft','arrowright','arrowup','arrowdown'].includes(k)){e.preventDefault();const n=e.shiftKey?10:1;action('move',{dx:k==='arrowleft'?-n:k==='arrowright'?n:0,dy:k==='arrowup'?-n:k==='arrowdown'?n:0});return;}if(k==='['||k===']'){action('reorder',{position:k==='['?'back':'front'});return;}const shortcuts={v:'select',h:'pan',p:'pen',e:'erase',t:'text',r:'rect',o:'ellipse',a:'arrow',n:'note',l:'lasso'};if(shortcuts[k]&&!mod)chooseTool(shortcuts[k]);};
       useEffect(()=>{const release=()=>{space.current=false;};window.addEventListener('keyup',release);window.addEventListener('blur',release);return()=>{window.removeEventListener('keyup',release);window.removeEventListener('blur',release);};},[]);
-      const pointerDown=e=>{if(!doc||e.button>1||live.current.busy)return;
+      const pointerDown=e=>{if(!doc||e.button>1)return;
         // Clicking anywhere outside the text box commits what was typed instead of dropping it.
         if(live.current.editor){saveEditor();return;}
         root.current.focus();const p=world(e);e.currentTarget.setPointerCapture(e.pointerId);let g;
@@ -293,7 +300,10 @@ window.__ModuleLoader__.load({
         else if(tool==='text'||tool==='note'){beginEditor(null,p);return;}
         else {const hit=pick(p);if(hit){let ids=selection.includes(hit.id)?selection:e.shiftKey?[...selection,hit.id]:[hit.id];if(e.shiftKey&&selection.includes(hit.id)){ids=selection.filter(id=>id!==hit.id);setSelection(ids);return;}setSelection(ids);g={kind:'move',start:p,end:p,ids:roots(ids)};}else{if(!e.shiftKey){setSelection([]);setRotateMode(false);}g={kind:'box',start:p,end:p,add:e.shiftKey?selection:[]};}}
         live.current.gesture=g;queuePaint();};
-      const pointerMove=e=>{const g=live.current.gesture;if(g?.frozen)return;if(!g){const st=live.current;
+      const pointerMove=e=>{const g=live.current.gesture;
+        // A frozen commit preview must not follow the pointer, but the cursor should still respond immediately.
+        if(g?.frozen){const st=live.current;if(svg.current&&st.tool!=='erase')svg.current.style.cursor=rotateMode&&selection.length?'grab':st.tool==='pan'?'grab':st.tool==='select'?'default':'crosshair';return;}
+        if(!g){const st=live.current;
           if(st.tool==='erase'){hoverRef.current=world(e);queuePaint('overlay');}
           else if(svg.current){const r=svg.current.getBoundingClientRect(),hd=hitHandleAt(e.clientX-r.left,e.clientY-r.top);
             const base=rotateMode&&selection.length?'grab':st.tool==='pan'?'grab':st.tool==='select'?'default':'crosshair';
@@ -341,9 +351,10 @@ window.__ModuleLoader__.load({
       const pointerUp=async e=>{const g=live.current.gesture;if(!g||g.frozen)return;dropQueuedGesture();
         if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);
         const commits=['pen','erase','move','rotate','resize','rect','ellipse','arrow','semi'].includes(g.kind);
+        const frozen={...g,frozen:true};
         // Keep the last preview alive until the committed document arrives, so release never blinks through an empty frame.
-        const finished=ok=>{live.current.gesture=null;if(!ok)queuePaint();};
-        if(commits){live.current.gesture={...g,frozen:true};queuePaint();}else{live.current.gesture=null;queuePaint();}
+        const finished=ok=>{if(live.current.gesture===frozen)live.current.gesture=null;if(!ok)queuePaint();};
+        if(commits){live.current.gesture=frozen;}else{live.current.gesture=null;queuePaint();}
         if(g.kind==='pan'){return;}
         if(g.kind==='erase'){if(eraseWhole){const ids=eraserHits(g.points);if(ids.length){const r=await commit([{type:'delete',ids}]);finished(!!r);}else finished(false);return;}const r=await commit([{type:'erasePath',points:g.points,radius:radius/(live.current.view?.z||1)}]);finished(!!r);return;}
         if(g.kind==='move'){const dx=g.end[0]-g.start[0],dy=g.end[1]-g.start[1];if(dx||dy){const r=await commit([{type:'move',ids:g.ids,dx,dy}]);finished(!!r);}else finished(false);return;}
@@ -580,8 +591,6 @@ window.__ModuleLoader__.load({
       const paint=(force=false,scope='all')=>{if(scope==='overlay'){paintOverlay(force);return;}paintScene(force);paintOverlay(force);};
       paintRef.current=paint;
       useEffect(()=>{paint();});
-      // The committed document has been rendered; repaint the overlay so a frozen preview cannot outlive the commit.
-      useEffect(()=>{queuePaint('overlay');},[doc?.version]);
       const button=(label,onClick,props={})=>{const {icon,...rest}=props;return h('button',{type:'button',onClick,title:t(label),'aria-label':t(label),...rest},icon||t(label));};
       const consultChoice=async choice=>{const c=consult;if(!c)return;if(choice==='ignore'){setConsult(null);return;}let ops;if(choice==='card'&&c.id)ops=[{type:'promote',id:c.id,to:'card',approved:true}];else if(choice==='group'&&c.ids.length>1)ops=[{type:'group',ids:c.ids,groupId:uid()}];else return;if(await commit(ops))setConsult(null);};
       const tools={select:'Select',pan:'Pan',pen:'Pen',erase:'Erase',text:'Text',rect:'Rectangle',ellipse:'Ellipse',semi:'Semicircle',arrow:'Arrow',note:'Note',lasso:'Lasso'};
@@ -684,7 +693,7 @@ window.__ModuleLoader__.load({
             onKeyDown:e=>{if(e.key==='Escape'){e.stopPropagation();live.current.editor=null;setEditor(null);}if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();saveEditor();}}}),h('div',{className:'ic-consult',style:{top:editor.rect[1]*eview.z+eview.y+Math.max(85,editor.rect[3]*eview.z)+10,left:editor.rect[0]*eview.z+eview.x,right:'auto',bottom:'auto',width:'auto',maxWidth:'calc(100% - 20px)',padding:'8px 10px'}},h('div',{className:'ic-actions'},h('input',{type:'color',className:'ic-color',value:editor.textColor||'#26382d',onChange:e=>{const next={...live.current.editor,textColor:e.target.value};live.current.editor=next;setEditor(next);},'aria-label':t('Text color'),title:t('Text color')}),h('select',{'aria-label':t('Font size'),title:t('Font size'),value:Number(editor.fontSize)||16,onChange:e=>{const next={...live.current.editor,fontSize:+e.target.value};live.current.editor=next;setEditor(next);}},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),button('Save',saveEditor),button('Cancel',()=>{live.current.editor=null;setEditor(null);})))),
           consult&&h('aside',{className:'ic-consult','aria-label':t('What does this circle mean?')},h('h3',null,t('What does this circle mean?')),h('p',null,t('Keep it as a drawing, make a card, or group the enclosed items. Nothing converts without your choice.')),h('div',{className:'ic-actions'},consult.id&&button('Make card',()=>consultChoice('card'),{disabled:busy}),button('Group enclosed',()=>consultChoice('group'),{disabled:busy||consult.ids.length<2}),button('Keep drawing',()=>consultChoice('ignore'))))),
         h('div',{className:'ic-top'},
-          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.1.1'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
+          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.1.2'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
           h('div',{className:'ic-float ic-tr'},button('Undo',()=>action('undo'),{disabled:busy||!doc?.history?.length}),button('Redo',()=>action('redo'),{disabled:busy||!doc?.future?.length}),button(confirmClear?'Confirm clear':'Clear canvas',clearBoard,{disabled:!doc?.elements?.length||busy,'aria-pressed':confirmClear}),button('Grid',()=>{const next=!grid;live.current.grid=next;setGrid(next);paintRef.current&&paintRef.current();},{'aria-pressed':grid}),button('Numbers',()=>{const next=!badges;live.current.badges=next;setBadges(next);paintRef.current&&paintRef.current();},{'aria-pressed':badges}),button('Fit',fit,{disabled:!doc}))),
         h('div',{className:'ic-float ic-tc ic-rail',role:'toolbar','aria-label':t('Canvas'),onMouseLeave:()=>{setTip(null);setMoreOpen(false);}},
           ...primaryTools.map(k=>toolButton(k)),
