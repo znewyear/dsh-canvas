@@ -565,6 +565,20 @@ test('shape style controls update the selected shape',async()=>{
   assert.equal(op.id,created.element.id);
 });
 
+test('eraser radius follows the live zoom',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('e'));
+  tree=panel.render();
+  button(tree,'Zoom in').props.onClick();
+  await tick();
+  await gesture(panel,[[100,100],[200,120]]);
+  const op=panel.calls.at(-1)[1].ops[0];
+  assert.equal(op.type,'erasePath');
+  assert.ok(Math.abs(op.radius-14/1.2)<1e-9,'the committed radius is screen-constant');
+});
+
 test('whole erase removes everything it touches in one operation',async()=>{
   const panel=harness();
   await tick();

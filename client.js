@@ -476,7 +476,21 @@ window.__ModuleLoader__.load({
         for(const e of (doc2.elements||[]).filter(x=>!x.parent))walk(e);};
       const drawPreview=(ctx,st)=>{const g=st.gesture;if(!g)return;const v=st.view;
         if(g.points){
-          if(g.kind==='erase'){ctx.beginPath();g.points.forEach((p,i)=>{if(i)ctx.lineTo(p[0],p[1]);else ctx.moveTo(p[0],p[1]);});ctx.strokeStyle='rgba(175,59,59,.28)';ctx.lineWidth=st.radius*2;ctx.setLineDash([]);ctx.stroke();return;}
+          if(g.kind==='erase'){
+            const z=v.z||1,rr=st.radius/z,last=g.points[g.points.length-1];
+            ctx.beginPath();g.points.forEach((p,i)=>{if(i)ctx.lineTo(p[0],p[1]);else ctx.moveTo(p[0],p[1]);});
+            ctx.strokeStyle='rgba(175,59,59,.28)';ctx.lineWidth=rr*2;ctx.setLineDash([]);ctx.stroke();
+            // Whole-stroke mode: outline every element the trail has already touched, so the target is visible before release.
+            if(eraseWhole){const ids=descendants(eraserHits(g.points));
+              for(const e of (st.doc?.elements||[])){
+                if(e.kind==='group'||!ids.has(e.id))continue;
+                const r=rectWith(e,st.gesture);ctx.strokeStyle='rgba(175,59,59,.8)';ctx.lineWidth=1.2/z;ctx.setLineDash([5/z,3/z]);
+                ctx.strokeRect(r[0]-2/z,r[1]-2/z,r[2]+4/z,r[3]+4/z);}
+              ctx.setLineDash([]);}
+            // Keep the tool radius visible while the stroke is in progress.
+            ctx.beginPath();ctx.arc(last[0],last[1],rr,0,Math.PI*2);ctx.strokeStyle='rgba(53,108,89,.75)';ctx.lineWidth=1/z;ctx.setLineDash([4/z,3/z]);ctx.stroke();ctx.setLineDash([]);
+            return;
+          }
           if(g.kind==='pen'){strokePath(ctx,g.points,st.width,st.penKind||'plain',st.color,g.pressures);return;}
           ctx.beginPath();g.points.forEach((p,i)=>{if(i)ctx.lineTo(p[0],p[1]);else ctx.moveTo(p[0],p[1]);});ctx.strokeStyle=st.color;ctx.lineWidth=1/v.z;ctx.setLineDash([4/v.z,4/v.z]);ctx.stroke();ctx.setLineDash([]);return;}
         if(['rect','ellipse','arrow','box','semi'].includes(g.kind)){const r=normalize(g.start,g.end);
@@ -652,7 +666,7 @@ window.__ModuleLoader__.load({
             onKeyDown:e=>{if(e.key==='Escape'){e.stopPropagation();live.current.editor=null;setEditor(null);}if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();saveEditor();}}}),h('div',{className:'ic-consult',style:{top:editor.rect[1]*eview.z+eview.y+Math.max(85,editor.rect[3]*eview.z)+10,left:editor.rect[0]*eview.z+eview.x,right:'auto',bottom:'auto',width:'auto',maxWidth:'calc(100% - 20px)',padding:'8px 10px'}},h('div',{className:'ic-actions'},h('input',{type:'color',className:'ic-color',value:editor.textColor||'#26382d',onChange:e=>{const next={...live.current.editor,textColor:e.target.value};live.current.editor=next;setEditor(next);},'aria-label':t('Text color'),title:t('Text color')}),h('select',{'aria-label':t('Font size'),title:t('Font size'),value:Number(editor.fontSize)||16,onChange:e=>{const next={...live.current.editor,fontSize:+e.target.value};live.current.editor=next;setEditor(next);}},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),button('Save',saveEditor),button('Cancel',()=>{live.current.editor=null;setEditor(null);})))),
           consult&&h('aside',{className:'ic-consult','aria-label':t('What does this circle mean?')},h('h3',null,t('What does this circle mean?')),h('p',null,t('Keep it as a drawing, make a card, or group the enclosed items. Nothing converts without your choice.')),h('div',{className:'ic-actions'},consult.id&&button('Make card',()=>consultChoice('card'),{disabled:busy}),button('Group enclosed',()=>consultChoice('group'),{disabled:busy||consult.ids.length<2}),button('Keep drawing',()=>consultChoice('ignore'))))),
         h('div',{className:'ic-top'},
-          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.0.101'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
+          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.0.102'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
           h('div',{className:'ic-float ic-tr'},button('Undo',()=>action('undo'),{disabled:busy||!doc?.history?.length}),button('Redo',()=>action('redo'),{disabled:busy||!doc?.future?.length}),button(confirmClear?'Confirm clear':'Clear canvas',clearBoard,{disabled:!doc?.elements?.length||busy,'aria-pressed':confirmClear}),button('Grid',()=>{const next=!grid;live.current.grid=next;setGrid(next);paintRef.current&&paintRef.current();},{'aria-pressed':grid}),button('Numbers',()=>{const next=!badges;live.current.badges=next;setBadges(next);paintRef.current&&paintRef.current();},{'aria-pressed':badges}),button('Fit',fit,{disabled:!doc}))),
         h('div',{className:'ic-float ic-tc ic-rail',role:'toolbar','aria-label':t('Canvas'),onMouseLeave:()=>{setTip(null);setMoreOpen(false);}},
           ...primaryTools.map(k=>toolButton(k)),
