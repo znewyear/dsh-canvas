@@ -655,6 +655,23 @@ test('selection exposes eight grabbable directional handles',async()=>{
   }
 });
 
+test('the marquee stays one screen pixel regardless of the shape border width',async()=>{
+  const widths=[];let lw=0;
+  const ctx=new Proxy({}, {get:(target,key)=>{if(key==='lineWidth')return lw;if(key==='strokeRect')return()=>widths.push(lw);return key in target?target[key]:()=>{};},
+    set:(target,key,value)=>{if(key==='lineWidth')lw=value;target[key]=value;return true;}});
+  const panel=harness({canvasContext:ctx});
+  await tick();
+  const tree=panel.render();
+  const surface=nodes(tree).find(n=>n.props?.role==='img').props;
+  const ev=(x,y)=>({button:0,pointerId:1,clientX:x,clientY:y,shiftKey:false,
+    target:{getAttribute:()=>null},preventDefault(){},stopPropagation(){},
+    currentTarget:{setPointerCapture(){},releasePointerCapture(){},hasPointerCapture:()=>false}});
+  surface.onPointerDown(ev(100,100));
+  surface.onPointerMove(ev(300,200));
+  assert.ok(widths.length,'the marquee is painted');
+  assert.equal(widths.at(-1),1,'the marquee ignores the current border width');
+});
+
 test('pointing at a tool shows its name and shortcut',async()=>{
   const panel=harness();
   await tick();
