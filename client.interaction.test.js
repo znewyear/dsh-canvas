@@ -676,6 +676,34 @@ test('shape style controls update the selected shape',async()=>{
   assert.equal(op.id,created.element.id);
 });
 
+test('the semicircle exposes the same shape style controls',async()=>{
+  const panel=harness();
+  await tick();
+  let tree=panel.render();
+  button(tree,'Semicircle').props.onClick();
+  tree=panel.render();
+  await gesture(panel,[[100,100],[300,220]]);
+  const created=panel.calls.at(-1)[1].ops[0].element;
+  assert.equal(created.semi,true,'new semicircles are marked as shapes');
+  tree=panel.render();
+  tree.props.onKeyDown(key('v'));
+  tree=panel.render();
+  assert.ok(button(tree,'Border color'),'the selected semicircle offers border colour');
+  assert.ok(button(tree,'Border width'),'the selected semicircle offers border width');
+  assert.ok(button(tree,'Fill'),'the selected semicircle offers fill');
+});
+
+test('legacy semicircle paths are recognised without the marker',async()=>{
+  const points=[];
+  for(let i=0;i<=32;i++){const a=Math.PI+Math.PI*i/32;points.push([50+50*Math.cos(a),50+50*Math.sin(a)]);}
+  const panel=harness({elements:[{id:'s',kind:'path',rect:[0,0,100,50],points,stroke:'#356c59',strokeWidth:2,fill:'none'}]});
+  await tick();
+  let tree=panel.render();
+  tree.props.onKeyDown(key('a',{ctrlKey:true}));
+  tree=panel.render();
+  assert.ok(button(tree,'Border color'),'the 33-point half disc is treated as a shape');
+});
+
 test('eraser radius follows the live zoom',async()=>{
   const panel=harness();
   await tick();
