@@ -206,6 +206,14 @@ window.__ModuleLoader__.load({
       useEffect(()=>()=>{clearTimeout(styleTimer.current);dropQueuedGesture();live.current.gesture=null;},[docId]);
       // Decoded images arrive after the requesting frame, so every mounted panel repaints once when one loads.
       useEffect(()=>{const fn=()=>{paintRef.current&&paintRef.current(true);};repainters.add(fn);return()=>{repainters.delete(fn);};},[]);
+      // Theme changes and DPR moves must invalidate both cached layers even when no document edit arrives.
+      useEffect(()=>{if(typeof window==='undefined'||typeof document==='undefined')return;
+        const obs=typeof MutationObserver==='function'?new MutationObserver(()=>queuePaint()):null;
+        obs?.observe(document.documentElement,{attributes:true,attributeFilter:['class','style','data-theme']});
+        const mq=typeof matchMedia==='function'?matchMedia('(prefers-color-scheme: dark)'):null;
+        const onResize=()=>queuePaint();window.addEventListener('resize',onResize);mq?.addEventListener?.('change',onResize);
+        if(document.fonts?.ready)document.fonts.ready.then(()=>queuePaint()).catch(()=>{});
+        return()=>{obs?.disconnect();window.removeEventListener('resize',onResize);mq?.removeEventListener?.('change',onResize);};},[]);
       live.current={doc,docId,busy,gesture:live.current.gesture,editor,selection,view:viewRef.current,tool,color,width,radius,penKind,grid,badges};
       const report=e=>setError(e?.code==='VERSION_CONFLICT'?t('Conflict: another edit arrived. Refresh, then retry your action. Your gesture was not applied.'):(e?.message||String(e)));
       const rpc=async(method,args)=>{ const send=globalThis.__DSH_TRANSPORT__?.fetch??((input,init)=>globalThis.fetch(input,init)); const response=await send(`api/intent-canvas/${method}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(args)}); if(!response.ok)throw new Error(`${t('Canvas transport failed')}: HTTP ${response.status}`); const r=await response.json(); if(!r?.ok)throw Object.assign(new Error(r?.error?.message||t('Canvas request failed')),{code:r?.error?.code}); return r; };
@@ -505,11 +513,11 @@ window.__ModuleLoader__.load({
         return {bg,line,ink};};
       // The committed scene is its own bitmap: gesture frames clear only the overlay and never touch this layer.
       const paintScene=(force=false)=>{const cv=sceneRef.current;if(!cv||typeof cv.getContext!=='function')return;const ctx=cv.getContext('2d');if(!ctx)return;const st=live.current,{dpr,w,h2,bw,bh}=layerSize(cv);
-        const key=[bw,bh,st.docId,st.doc?.version,st.doc?.elements?.length,st.view.x,st.view.y,st.view.z,st.grid?1:0,st.gesture?1:0].join('|');
+        const {bg,ink}=themeOf(cv);
+        const key=[bw,bh,bg,ink,st.docId,st.doc?.version,st.doc?.elements?.length,st.view.x,st.view.y,st.view.z,st.grid?1:0,st.gesture?1:0].join('|');
         if(!force&&painted.current.scene===key)return;
         painted.current.scene=key;
         if(cv.width!==bw||cv.height!==bh){cv.width=bw;cv.height=bh;}
-        const {bg,ink}=themeOf(cv);
         ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h2);ctx.fillStyle=bg;ctx.fillRect(0,0,w,h2);
         const v=st.view;
         if(st.grid){const step=24*v.z,r=Math.max(.9,Math.min(1.7,step*.06));
@@ -518,11 +526,11 @@ window.__ModuleLoader__.load({
           ctx.restore();}
         ctx.save();ctx.translate(v.x,v.y);ctx.scale(v.z,v.z);drawScene(ctx,st.doc||{elements:[]},st,ink);ctx.restore();};
       const paintOverlay=(force=false)=>{const cv=svg.current;if(!cv||typeof cv.getContext!=='function')return;const ctx=cv.getContext('2d');if(!ctx)return;const st=live.current,{dpr,w,h2,bw,bh}=layerSize(cv);
-        const key=[bw,bh,st.docId,st.doc?.version,st.doc?.elements?.length,st.view.x,st.view.y,st.view.z,st.tool,st.badges?1:0,(st.selection||[]).join(','),st.color,st.width,st.radius,st.penKind,st.gesture?1:0,st.editor?1:0,hoverRef.current?1:0].join('|');
+        const {line,ink,bg}=themeOf(cv);
+        const key=[bw,bh,bg,line,ink,st.docId,st.doc?.version,st.doc?.elements?.length,st.view.x,st.view.y,st.view.z,st.tool,st.badges?1:0,(st.selection||[]).join(','),st.color,st.width,st.radius,st.penKind,st.gesture?1:0,st.editor?1:0,hoverRef.current?1:0].join('|');
         if(!force&&painted.current.overlay===key)return;
         painted.current.overlay=key;
         if(cv.width!==bw||cv.height!==bh){cv.width=bw;cv.height=bh;}
-        const {line,ink,bg}=themeOf(cv);
         ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h2);
         const v=st.view;
         ctx.save();ctx.translate(v.x,v.y);ctx.scale(v.z,v.z);
@@ -666,7 +674,7 @@ window.__ModuleLoader__.load({
             onKeyDown:e=>{if(e.key==='Escape'){e.stopPropagation();live.current.editor=null;setEditor(null);}if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();saveEditor();}}}),h('div',{className:'ic-consult',style:{top:editor.rect[1]*eview.z+eview.y+Math.max(85,editor.rect[3]*eview.z)+10,left:editor.rect[0]*eview.z+eview.x,right:'auto',bottom:'auto',width:'auto',maxWidth:'calc(100% - 20px)',padding:'8px 10px'}},h('div',{className:'ic-actions'},h('input',{type:'color',className:'ic-color',value:editor.textColor||'#26382d',onChange:e=>{const next={...live.current.editor,textColor:e.target.value};live.current.editor=next;setEditor(next);},'aria-label':t('Text color'),title:t('Text color')}),h('select',{'aria-label':t('Font size'),title:t('Font size'),value:Number(editor.fontSize)||16,onChange:e=>{const next={...live.current.editor,fontSize:+e.target.value};live.current.editor=next;setEditor(next);}},...[12,16,20,28,36,48].map(n=>h('option',{key:n,value:n},`${n}px`))),button('Save',saveEditor),button('Cancel',()=>{live.current.editor=null;setEditor(null);})))),
           consult&&h('aside',{className:'ic-consult','aria-label':t('What does this circle mean?')},h('h3',null,t('What does this circle mean?')),h('p',null,t('Keep it as a drawing, make a card, or group the enclosed items. Nothing converts without your choice.')),h('div',{className:'ic-actions'},consult.id&&button('Make card',()=>consultChoice('card'),{disabled:busy}),button('Group enclosed',()=>consultChoice('group'),{disabled:busy||consult.ids.length<2}),button('Keep drawing',()=>consultChoice('ignore'))))),
         h('div',{className:'ic-top'},
-          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.0.102'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
+          h('div',{className:'ic-float ic-tl'},h('span',{className:'ic-brand'},h(Icon,{size:16}),t('Canvas')),h('span',{className:'ic-chip'},'v1.0.103'),h('form',{className:'ic-actions',onSubmit:e=>{e.preventDefault();openDoc();}},h('input',{className:'ic-doc',value:inputId,onChange:e=>setInputId(e.target.value),maxLength:160,'aria-label':t('Document'),placeholder:t('Please enter the canvas id to open'),title:t('Canvas document id; defaults to this session. Enter another id to open a different canvas.'),style:{width:'clamp(160px, 24vw, 280px)'}}),button(inputId.trim()===docId?'Reload':'Open',openDoc,{disabled:busy||!inputId.trim(),title:t(inputId.trim()===docId?'Re-read this canvas from the server':'Open the entered canvas id in this panel')}))),
           h('div',{className:'ic-float ic-tr'},button('Undo',()=>action('undo'),{disabled:busy||!doc?.history?.length}),button('Redo',()=>action('redo'),{disabled:busy||!doc?.future?.length}),button(confirmClear?'Confirm clear':'Clear canvas',clearBoard,{disabled:!doc?.elements?.length||busy,'aria-pressed':confirmClear}),button('Grid',()=>{const next=!grid;live.current.grid=next;setGrid(next);paintRef.current&&paintRef.current();},{'aria-pressed':grid}),button('Numbers',()=>{const next=!badges;live.current.badges=next;setBadges(next);paintRef.current&&paintRef.current();},{'aria-pressed':badges}),button('Fit',fit,{disabled:!doc}))),
         h('div',{className:'ic-float ic-tc ic-rail',role:'toolbar','aria-label':t('Canvas'),onMouseLeave:()=>{setTip(null);setMoreOpen(false);}},
           ...primaryTools.map(k=>toolButton(k)),

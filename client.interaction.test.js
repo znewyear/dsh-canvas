@@ -450,6 +450,21 @@ test('an idle host re-render does not repaint an unchanged canvas',async()=>{
   assert.equal(calls.clearRect||0,first);
 });
 
+test('a host theme change repaints the cached layers',async()=>{
+  let bg='#f5f5f2';
+  const calls={};
+  const ctx=new Proxy({}, {get:(target,key)=>key in target?target[key]:(...args)=>{calls[key]=(calls[key]||0)+1;},
+    set:(target,key,value)=>{target[key]=value;return true;}});
+  const panel=harness({canvasContext:ctx,globals:{getComputedStyle:()=>({getPropertyValue:name=>name==='--ic-bg'?bg:'',})}});
+  await tick();
+  panel.render();panel.flush();
+  const first=calls.clearRect||0;
+  assert.ok(first>0);
+  bg='#101010';
+  panel.render();panel.flush();
+  assert.ok((calls.clearRect||0)>first,'a theme change must not stay cached');
+});
+
 test('the canvas is split into a scene bitmap and an event overlay',async()=>{
   const panel=harness();
   await tick();
